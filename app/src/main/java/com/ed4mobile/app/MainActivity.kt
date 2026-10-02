@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
             super.onDraw(c); c.drawColor(Color.BLACK)
             val bmp=world
             if(bmp==null){ drawImport(c); return }
-            animate()
+            advanceMovement()
             drawWorld(c,bmp)
             drawHero(c,width*.5f,height*.52f)
             drawHud(c)
