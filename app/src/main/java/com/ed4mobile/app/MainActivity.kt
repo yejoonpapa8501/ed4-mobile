@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         private var info = "원본 ed4.zip을 선택해 주세요"
         var showHelp = true
         private var px = 0.5f
-        private var py = 0.55f
+        private var py = 0.55f\n        private var targetX = px\n        private var targetY = py\n        private var lastFrame = 0L
         private val buttons = mutableMapOf<String, RectF>()
 
         fun loadWorldMap(file: File, text: String) {
@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDraw(c: Canvas) {
             super.onDraw(c)
-            c.drawColor(Color.BLACK)
+            c.drawColor(Color.BLACK)\n            animateMarker()
             val bmp = map
             if (bmp != null) {
                 val scale = minOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
@@ -133,6 +133,22 @@ class MainActivity : AppCompatActivity() {
                 c.drawText("뒤로가기: 이 안내 닫기",width/2f,height*.67f,paint)
             }
             paint.textAlign = Paint.Align.LEFT
+        }
+
+        private fun animateMarker() {
+            val now = System.nanoTime()
+            if (lastFrame == 0L) lastFrame = now
+            val dt = ((now - lastFrame) / 1_000_000_000f).coerceAtMost(.05f)
+            lastFrame = now
+            val dx = targetX - px
+            val dy = targetY - py
+            val dist = kotlin.math.sqrt(dx*dx + dy*dy)
+            if (dist > .002f) {
+                val step = (.45f * dt).coerceAtMost(dist)
+                px += dx / dist * step
+                py += dy / dist * step
+                postInvalidateOnAnimation()
+            }
         }
 
         private fun drawControls(c: Canvas) {
