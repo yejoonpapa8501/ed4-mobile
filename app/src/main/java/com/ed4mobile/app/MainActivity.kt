@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import java.io.BufferedInputStream
 import java.io.File
 import java.util.Locale
+import android.util.Base64
 import java.util.zip.ZipInputStream
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -41,13 +42,14 @@ class MainActivity : AppCompatActivity() {
         game = FieldView()
         setContentView(game)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { if (!loading) { if (game.opening) game.skipOpening() else showMenu() } }
+            override fun handleOnBackPressed() { if (!loading) { if (game.opening) game.skipOpening() else if (game.hasDialogue()) game.cancelDialogue() else showMenu() } }
         })
         if (File(dataDirectory(), "DATA_A.DAT").exists()) {
             background("원본 필드를 준비하는 중…") {
                 assets = Ed4Assets(dataDirectory())
                 val index = saves.getInt("resume.scene", 0).coerceIn(assets!!.sceneIds.indices)
-                assets!!.scene(index)
+                if (saves.contains("resume.resource")) assets!!.sceneResource(saves.getInt("resume.resource", 0), saves.getInt("resume.stage", 0))
+                else assets!!.scene(index)
             }
         } else game.message = "영웅전설 IV · 주홍물방울\n화면을 눌러 보유하신 ed4.zip을 선택해 주세요"
     }
@@ -61,7 +63,7 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 loading = false
                 if (isFinishing || isDestroyed) {
-                    result.getOrNull()?.let { it.image.recycle(); it.frames.forEach { frame -> frame.recycle() } }
+                    result.getOrNull()?.let { it.image.recycle(); it.frames.forEach { frame -> frame.recycle() }; it.npcFrames.values.flatten().forEach { frame -> frame.recycle() } }
                     return@runOnUiThread
                 }
                 result.onSuccess {
@@ -69,10 +71,13 @@ class MainActivity : AppCompatActivity() {
                         game.restoreX = saves.getFloat("resume.x", 536f)
                         game.restoreY = saves.getFloat("resume.y", 660f)
                         game.speed = saves.getInt("resume.speed", 2).coerceIn(1, 3)
+                        game.restoreActors = true
+                        game.pendingState = saves.getString("resume.state", null)?.let { value -> runCatching { Base64.decode(value, Base64.DEFAULT) }.getOrNull() }
                     }
                     game.applyScene(it)
                 }.onFailure {
-                    game.restoreX = null; game.restoreY = null
+                    game.scenario?.cancel()
+                    game.restoreX = null; game.restoreY = null; game.pendingState = null; game.restoreActors = false
                     game.message = if (game.scene == null) "불러오기 실패\n화면을 눌러 ZIP을 다시 선택해 주세요" else ""
                     Toast.makeText(this, it.message ?: "게임 데이터를 읽지 못했습니다", Toast.LENGTH_LONG).show()
                 }
@@ -115,7 +120,7 @@ class MainActivity : AppCompatActivity() {
             }
             require(required.all { File(temp, it).exists() }) { "영웅전설4 필드 데이터를 찾지 못했습니다" }
             val check = Ed4Assets(temp).scene(0)
-            check.image.recycle(); check.frames.forEach { it.recycle() }
+            check.image.recycle(); check.frames.forEach { it.recycle() }; check.npcFrames.values.flatten().forEach { it.recycle() }
             val old = dataDirectory(); val backup = File(filesDir, "ed4-backup").apply { deleteRecursively() }
             if (old.exists()) require(old.renameTo(backup))
             if (!temp.renameTo(old)) { backup.renameTo(old); error("게임 데이터를 저장하지 못했습니다") }
@@ -127,7 +132,9 @@ class MainActivity : AppCompatActivity() {
     private fun saveResume() {
         if (loading || game.scene == null) return
         saves.edit().putInt("resume.scene", game.sceneIndex).putFloat("resume.x", game.heroX)
-            .putFloat("resume.y", game.heroY).putInt("resume.speed", game.speed).apply()
+            .putFloat("resume.y", game.heroY).putInt("resume.speed", game.speed)
+            .putInt("resume.resource", game.scene!!.id).putInt("resume.stage", game.scene!!.stage)
+            .putString("resume.state", game.scenario?.checkpoint()?.let { Base64.encodeToString(it, Base64.NO_WRAP) }).apply()
     }
     private fun showMenu() {
         if (game.scene == null) { choose(); return }
@@ -136,11 +143,18 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("영웅전설 IV").setItems(items) { _, item ->
             when (item) {
                 1 -> game.speed = game.speed % 3 + 1
-                2 -> { saves.edit().putInt("scene", game.sceneIndex).putFloat("x", game.heroX).putFloat("y", game.heroY).putInt("speed", game.speed).apply(); toast("탐색 위치를 저장했습니다") }
+                2 -> {
+                    saves.edit().putInt("resource", game.scene!!.id).putInt("stage", game.scene!!.stage)
+                        .putFloat("x", game.heroX).putFloat("y", game.heroY).putInt("speed", game.speed)
+                        .putString("state", game.scenario?.checkpoint()?.let { Base64.encodeToString(it, Base64.NO_WRAP) }).apply()
+                    toast("진행 상태를 저장했습니다")
+                }
                 3 -> if (saves.contains("x")) {
                     game.restoreX = saves.getFloat("x", 512f); game.restoreY = saves.getFloat("y", 640f)
                     game.speed = saves.getInt("speed", 2).coerceIn(1, 3)
-                    loadScene(saves.getInt("scene", 0))
+                    game.restoreActors = true
+                    game.pendingState = saves.getString("state", null)?.let { value -> runCatching { Base64.decode(value, Base64.DEFAULT) }.getOrNull() }
+                    if (saves.contains("resource")) loadResource(saves.getInt("resource", 0), saves.getInt("stage", 0)) else loadScene(saves.getInt("scene", 0))
                 } else toast("저장된 탐색 위치가 없습니다")
                 4 -> showScenes()
                 5 -> choose()
@@ -158,10 +172,21 @@ class MainActivity : AppCompatActivity() {
         val target = index.coerceIn(a.sceneIds.indices)
         background("원본 필드를 준비하는 중…") { a.scene(target) }
     }
+    private fun loadResource(resource: Int, stage: Int) {
+        val a = assets ?: return
+        background("원본 필드를 준비하는 중…") { a.sceneResource(resource, stage) }
+    }
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
 
     inner class FieldView : View(this@MainActivity) {
         var scene: Ed4Assets.Scene? = null
+        var scenario: Ed4Scenario? = null
+        var pendingState: ByteArray? = null
+        var restoreActors = false
+        private var speech: Ed4Scenario.Event.Speech? = null
+        private var speechPage = 0
+        private var approaching = 0
+        private var dialogueBox = RectF()
         var sceneIndex = 0
         var message = ""
         var paused = false
@@ -181,14 +206,31 @@ class MainActivity : AppCompatActivity() {
         private var menuButton = RectF()
         fun resetClock() { clock = 0L; invalidate() }
         fun skipOpening() { opening = false; resetClock() }
+        fun cancelDialogue() { scenario?.cancel(); speech = null; approaching = 0; resetClock() }
         fun applyScene(next: Ed4Assets.Scene) {
             val first = scene == null
-            scene?.let { it.image.recycle(); it.frames.forEach { b -> b.recycle() } }
-            scene = next; sceneIndex = assets!!.sceneIds.indexOf(next.id); message = ""
+            scene?.let { it.image.recycle(); it.frames.forEach { b -> b.recycle() }; it.npcFrames.values.flatten().forEach { b -> b.recycle() } }
+            scene = next; sceneIndex = assets!!.sceneIds.indexOf(next.id).coerceAtLeast(0); message = ""
+            scenario = Ed4Scenario(next.script, next.seed, next.characterNames)
+            val restoredActors = restoreActors && pendingState?.size == 0x2000
+            pendingState?.takeIf { it.size == 0x2000 }?.copyInto(scenario!!.memory); pendingState = null; restoreActors = false
+            val vm = scenario!!
+            val count = Ed4Archive.word(next.script, 22)
+            require(count in 1..64)
+            if (!restoredActors) for (index in 1 until count) {
+                val offset = Ed4Archive.word(next.script, 20) + (index - 1) * 6
+                val actor = 0x20 + index * 16
+                vm.putWord(actor, Ed4Archive.word(next.script, offset)); vm.putByte(actor + 2, next.script[offset + 2].toInt())
+                vm.putWord(actor + 4, Ed4Archive.word(next.script, offset + 3)); vm.putByte(actor + 3, vm.byte(actor + 4) and 6)
+                vm.putByte(actor + 12, next.script[offset + 5].toInt())
+            }
+            speech = null; approaching = 0
             if (first) { logos = assets?.openingImages() ?: emptyList(); logoIndex = 0; opening = logos.isNotEmpty() }
-            heroX = (restoreX ?: minOf(536f, next.image.width * .45f)).coerceIn(16f, next.image.width - 16f)
-            heroY = (restoreY ?: minOf(660f, next.image.height * .55f)).coerceIn(48f, next.image.height - 16f)
-            restoreX = null; restoreY = null; targetX = heroX; targetY = heroY; walked = 0f; resetClock()
+            heroX = (restoreX ?: next.spawnX).coerceIn(16f, next.image.width - 16f)
+            heroY = (restoreY ?: next.spawnY).coerceIn(48f, next.image.height - 16f)
+            val spawnOffset = 46 + next.stage * 14
+            vm.putByte(0x22, next.script[spawnOffset + 6].toInt())
+            restoreX = null; restoreY = null; targetX = heroX; targetY = heroY; walked = 0f; syncHero(); resetClock()
         }
         override fun onDraw(c: Canvas) {
             c.drawColor(Color.rgb(10, 14, 21))
@@ -208,11 +250,13 @@ class MainActivity : AppCompatActivity() {
             val dt = if (clock == 0L) 0f else ((now - clock) / 1_000_000_000f).coerceAtMost(.05f)
             clock = now
             val dx = targetX - heroX; val dy = targetY - heroY; val distance = hypot(dx, dy)
-            val moving = distance > .1f && !paused
+            val moving = distance > .1f && !paused && speech == null
             if (moving) {
                 direction = if (abs(dx) > abs(dy)) if (dx < 0) 0 else 2 else if (dy < 0) 1 else 3
                 val step = minOf(80f * speed * dt, distance)
                 heroX += dx / distance * step; heroY += dy / distance * step; walked += step
+                syncHero()
+                if (approaching > 0 && distance <= 34f) { targetX = heroX; targetY = heroY; val actor = approaching; approaching = 0; interact(actor) }
             }
             val scale = width / 640f
             val top = 38f * scale; val bottom = 25f * scale
@@ -234,8 +278,21 @@ class MainActivity : AppCompatActivity() {
             }
             brush.color = Color.argb(95, 0, 0, 0)
             c.drawOval(RectF(sx(heroX) - 11 * scale, sy(heroY) - 3 * scale, sx(heroX) + 11 * scale, sy(heroY) + 3 * scale), brush)
-            val frame = direction * 2 + if (moving) (walked / 9).toInt() % 2 else 0
-            c.drawBitmap(s.frames[frame], null, RectF(sx(heroX - 16), sy(heroY - 46), sx(heroX + 16), sy(heroY + 2)), brush)
+            val vm = scenario!!
+            val actors = visibleActors().map { index -> index to ((vm.byte(0x20 + index * 16 + 1) + 1) * 16f) }.toMutableList()
+            actors.add(0 to heroY)
+            actors.sortedBy { it.second }.forEach { (index, _) ->
+                if (index == 0) {
+                    val frame = direction * 2 + if (moving) (walked / 9).toInt() % 2 else 0
+                    c.drawBitmap(s.frames[frame], null, RectF(sx(heroX - 16), sy(heroY - 46), sx(heroX + 16), sy(heroY + 2)), brush)
+                } else {
+                    val a = 0x20 + index * 16
+                    val frames = s.npcFrames[vm.byte(a + 5)] ?: return@forEach
+                    val frame = (vm.byte(a + 4) and 7)
+                    val x = (vm.byte(a) + 1) * 16f; val y = (vm.byte(a + 1) + 1) * 16f
+                    c.drawBitmap(frames[frame], null, RectF(sx(x - 16), sy(y - 46), sx(x + 16), sy(y + 2)), brush)
+                }
+            }
             c.restore()
             brush.color = Color.rgb(12, 21, 34); c.drawRect(0f, 0f, width.toFloat(), top, brush)
             brush.color = Color.rgb(219, 197, 142); brush.textSize = 16 * scale
@@ -247,7 +304,8 @@ class MainActivity : AppCompatActivity() {
             brush.color = Color.WHITE; brush.textSize = 12 * scale; c.drawText("메뉴", width - 52 * scale, 24 * scale, brush)
             brush.color = Color.rgb(12, 21, 34); c.drawRect(0f, height - bottom, width.toFloat(), height.toFloat(), brush)
             brush.color = Color.LTGRAY; brush.textSize = 10 * scale
-            c.drawText("터치하여 이동  ·  원본 맵 탐색 단계 (전투·이벤트 준비 중)", 12 * scale, height - 8 * scale, brush)
+            c.drawText("터치하여 이동  ·  마을 사람을 터치하여 대화", 12 * scale, height - 8 * scale, brush)
+            if (speech != null) drawSpeech(c)
             if (moving) postInvalidateOnAnimation()
         }
         private fun centerMessage(c: Canvas, text: String) {
@@ -260,12 +318,93 @@ class MainActivity : AppCompatActivity() {
             if (loading) return true
             if (scene == null) { choose(); return true }
             if (opening) { logoIndex++; if (logoIndex >= logos.size) opening = false; resetClock(); return true }
+            if (speech != null) {
+                if (dialogueBox.contains(e.x, e.y)) {
+                    val current = speech!!
+                    if (++speechPage >= current.pages.size) { speech = null; showEvent(scenario!!.resume()) }
+                    resetClock()
+                }
+                return true
+            }
             if (menuButton.contains(e.x, e.y)) { showMenu(); return true }
             if (paused || !field.contains(e.x, e.y)) return true
             val s = scene ?: return true
             targetX = (camera.left + (e.x - field.left) / field.width() * camera.width()).coerceIn(16f, s.image.width - 16f)
             targetY = (camera.top + (e.y - field.top) / field.height() * camera.height()).coerceIn(48f, s.image.height - 16f)
+            approaching = 0
+            val vm = scenario!!
+            visibleActors().firstOrNull { index ->
+                val a = 0x20 + index * 16
+                val x = (vm.byte(a) + 1) * 16f; val y = (vm.byte(a + 1) + 1) * 16f
+                targetX in x-20..x+20 && targetY in y-48..y+10
+            }?.let { index ->
+                approaching = index
+                val a = 0x20 + index * 16
+                targetX = (vm.byte(a) + 1) * 16f; targetY = (vm.byte(a + 1) + 1) * 16f
+                if (hypot(targetX - heroX, targetY - heroY) <= 48f) { targetX = heroX; targetY = heroY; approaching = 0; interact(index) }
+            }
             resetClock(); return true
+        }
+        fun hasDialogue() = speech != null
+        private fun syncHero() {
+            scenario?.let { vm -> vm.putByte(0x20, (heroX / 16 - 1).toInt()); vm.putByte(0x21, (heroY / 16 - 1).toInt()); vm.putByte(0x23, direction * 2) }
+        }
+        private fun visibleActors(): List<Int> {
+            val s = scene ?: return emptyList(); val vm = scenario ?: return emptyList()
+            return (1 until Ed4Archive.word(s.script, 22)).filter { index ->
+                val a = 0x20 + index * 16
+                (vm.byte(a + 12) and 0x82) == 0 && s.npcFrames.containsKey(vm.byte(a + 5))
+            }
+        }
+        private fun interact(index: Int) {
+            val s = scene ?: return
+            val offset = Ed4Archive.word(s.script, Ed4Archive.word(s.script, 26) + (index - 1) * 2)
+            if (offset != 0) showEvent(scenario!!.start(offset, index))
+        }
+        private fun showEvent(event: Ed4Scenario.Event) {
+            when (event) {
+                is Ed4Scenario.Event.Speech -> { speech = event.copy(pages = paginate(event.pages)); speechPage = 0 }
+                is Ed4Scenario.Event.MapChange -> { pendingState = scenario!!.transitionState(); loadResource(event.resource, event.stage) }
+                is Ed4Scenario.Event.Halt -> toast("이 이벤트는 아직 지원하지 않습니다 (%04X): %s".format(event.offset, event.reason))
+                Ed4Scenario.Event.Done -> { saveResume() }
+            }
+            invalidate()
+        }
+        private fun paginate(pages: List<String>): List<String> {
+            brush.textSize = 12*(width/640f)
+            val maxWidth = width-56*(width/640f)
+            return pages.flatMap { page ->
+                val lines = mutableListOf<String>()
+                page.split('\n').forEach { paragraph ->
+                    var rest = paragraph
+                    if (rest.isEmpty()) lines.add("")
+                    while (rest.isNotEmpty()) {
+                        val count = brush.breakText(rest, true, maxWidth, null).coerceAtLeast(1)
+                        lines.add(rest.substring(0,count)); rest = rest.substring(count)
+                    }
+                }
+                lines.chunked(5).map { it.joinToString("\n") }
+            }
+        }
+        private fun drawSpeech(c: Canvas) {
+            val current = speech ?: return
+            val scale = width / 640f
+            dialogueBox.set(16*scale, height-154*scale, width-16*scale, height-32*scale)
+            brush.color = Color.argb(245, 11, 20, 35); c.drawRoundRect(dialogueBox, 6*scale, 6*scale, brush)
+            brush.style = Paint.Style.STROKE; brush.strokeWidth = 1.5f*scale; brush.color = Color.rgb(218, 196, 140)
+            c.drawRoundRect(dialogueBox, 6*scale, 6*scale, brush); brush.style = Paint.Style.FILL
+            brush.textSize = 13*scale; c.drawText(current.speaker, dialogueBox.left+12*scale, dialogueBox.top+20*scale, brush)
+            brush.color = Color.WHITE; brush.textSize = 12*scale
+            var y = dialogueBox.top+41*scale
+            current.pages[speechPage].split('\n').forEach { paragraph ->
+                var rest = paragraph
+                while (rest.isNotEmpty()) {
+                    val count = brush.breakText(rest, true, dialogueBox.width()-24*scale, null).coerceAtLeast(1)
+                    c.drawText(rest.substring(0,count), dialogueBox.left+12*scale, y, brush); y+=16*scale; rest=rest.substring(count)
+                }
+            }
+            brush.color = Color.rgb(218, 196, 140); brush.textSize = 9*scale
+            c.drawText("터치하여 계속  ▼", dialogueBox.right-90*scale, dialogueBox.bottom-8*scale, brush)
         }
     }
 }

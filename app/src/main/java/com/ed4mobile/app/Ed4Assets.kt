@@ -9,19 +9,33 @@ import kotlin.math.roundToInt
 
 /** Verified DOS planar tiles and 14-layer map composites, without bundled game bytes. */
 class Ed4Assets(private val directory: File) {
-    private val area = Ed4Archive(File(directory, "DATA_A.DAT"))
+    private val areas = mutableMapOf<String, Ed4Archive>()
+    private fun archive(name: String) = areas.getOrPut(name) { Ed4Archive(File(directory, name)) }
     private val actors = Ed4Archive(File(directory, "DATA12.DAT"))
     private val engine = Ed4Archive(File(directory, "DATA11.DAT")).resource(0)
+    private fun resource(id: Int): ByteArray {
+        val bank = id ushr 12
+        val name = if (bank in 0..9) "DATA_${'A' + bank}.DAT" else "DATA${bank}.DAT"
+        require(bank in 0..13) { "리소스 뱅크 범위 초과" }
+        return archive(name).resource(id and 4095)
+    }
     val sceneIds = listOf(0, 4, 10, 14, 15, 21, 26, 30, 34, 39, 43, 47, 51, 55)
-    data class Scene(val image: Bitmap, val frames: List<Bitmap>, val id: Int, val unsupportedCells: Int)
+    data class Scene(val image: Bitmap, val frames: List<Bitmap>, val id: Int, val unsupportedCells: Int,
+        val script: ByteArray, val seed: ByteArray, val npcFrames: Map<Int, List<Bitmap>>, val stage: Int,
+        val spawnX: Float, val spawnY: Float, val characterNames: List<String>)
 
     fun scene(index: Int): Scene {
-        val id = sceneIds[index.coerceIn(sceneIds.indices)]
-        val metadata = area.resource(id)
-        fun ref(offset: Int) = Ed4Archive.word(metadata, offset) and 4095
-        val grid = area.resource(ref(0))
-        val graphics = area.resource(ref(4))
-        val definitions = area.resource(ref(6))
+        return sceneResource(sceneIds[index.coerceIn(sceneIds.indices)])
+    }
+    fun sceneResource(id: Int, stage: Int = 0): Scene {
+        val bank = id ushr 12
+        require(bank in 0..9) { "이 맵 리소스는 아직 지원하지 않습니다: %04X".format(id) }
+        val metadata = resource(id)
+        require(Ed4Archive.word(metadata, 2) == 0) { "광역 맵의 구역 전환은 아직 구현 중입니다 (%04X)".format(id) }
+        fun ref(offset: Int) = resource(Ed4Archive.word(metadata, offset))
+        val grid = ref(0)
+        val graphics = ref(4)
+        val definitions = ref(6)
         require(grid.size == 20480 && graphics.size >= 32768 && definitions.size == 8192)
         val palette = palette(graphics)
         val source = tiles(graphics.copyOfRange(0, 32768))
@@ -55,7 +69,30 @@ class Ed4Assets(private val directory: File) {
         val cropped = Bitmap.createBitmap(output, 0, 0, maxX, maxY)
         if (cropped !== output) output.recycle()
         tileImages.forEach { it.recycle() }
-        return Scene(cropped, heroFrames(palette), id, missing)
+        val stateBase = Ed4Archive.word(engine, 0xffa4) * 16
+        val stageOffset = 46 + stage * 14
+        require(stageOffset + 14 <= metadata.size) { "맵 배치 데이터 범위 초과" }
+        val spriteOffset = Ed4Archive.word(metadata, stageOffset)
+        val sprites = mutableMapOf<Int, List<Bitmap>>()
+        var pointer = spriteOffset
+        var records = 0
+        while (pointer < metadata.size && (metadata[pointer].toInt() and 255) != 255 && records++ < 64) {
+            require(pointer + 4 <= metadata.size)
+            val slot = metadata[pointer].toInt() and 255
+            val resource = Ed4Archive.word(metadata, pointer + 2)
+            val actorResource = if (resource <= 3) 0xc010 + resource else resource
+            if (actorResource ushr 12 == 12) runCatching { heroFrames(palette, actorResource and 4095) }.getOrNull()?.let { sprites[slot] = it }
+            pointer += 4
+        }
+        val position = Ed4Archive.word(metadata, stageOffset + 4)
+        return Scene(cropped, heroFrames(palette), id, missing, metadata,
+            engine.copyOfRange(stateBase, stateBase + 0x2000), sprites, stage,
+            ((position and 255) + 1) * 16f, ((position ushr 8) + 1) * 16f,
+            List(13) { i ->
+                val start = stateBase + Ed4Archive.word(engine, stateBase + 0x2614 + i * 2)
+                val end = (start until engine.size).first { engine[it].toInt() == 0 }
+                String(engine, start, end - start, java.nio.charset.Charset.forName("MS949"))
+            })
     }
 
     private fun palette(graphics: ByteArray): IntArray {
@@ -92,8 +129,8 @@ class Ed4Assets(private val directory: File) {
         }.getOrNull()
     }
 
-    private fun heroFrames(palette: IntArray): List<Bitmap> {
-        val source = tiles(actors.resource(16))
+    private fun heroFrames(palette: IntArray, resource: Int = 16): List<Bitmap> {
+        val source = tiles(actors.resource(resource))
         require(source.size >= 48)
         // Eight frames: left pair, back pair, right pair, front pair.
         return List(8) { frame ->

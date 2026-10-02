@@ -12,8 +12,8 @@ android {
         minSdk = 23
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }
-        versionCode = 35
-        versionName = "1.3-integrated-field"
+        versionCode = 37
+        versionName = "1.4-native-scenario"
     }
 
     buildTypes {
@@ -35,6 +35,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
