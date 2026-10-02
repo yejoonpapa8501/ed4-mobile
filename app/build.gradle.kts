@@ -12,7 +12,7 @@ android {
         minSdk = 23
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }
-        versionCode = 38
+        versionCode = 39
         versionName = "1.4.1-native-scenario"
     }
 

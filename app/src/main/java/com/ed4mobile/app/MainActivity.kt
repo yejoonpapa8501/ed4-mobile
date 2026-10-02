@@ -23,7 +23,7 @@ class MainActivity : AppCompatActivity() {
     private var assets: Ed4Assets? = null
     private var loading = false
     private var dialogDepth = 0
-    private val saves by lazy { getSharedPreferences("native-field-save", MODE_PRIVATE) }
+    private val saves by lazy { getSharedPreferences("native-scenario-save-v1", MODE_PRIVATE) }
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
             runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
