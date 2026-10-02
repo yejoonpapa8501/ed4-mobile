@@ -53,10 +53,10 @@ class MainActivity : AppCompatActivity() {
         bindHoldButton(R.id.btnCancel, DosKey.CANCEL)
         bindHoldButton(R.id.btnMenu, DosKey.MENU)
 
-        findViewById<Button>(R.id.btnSpeed).setOnClickListener { button ->
+        findViewById<Button>(R.id.btnSpeed).setOnClickListener { view ->
             if (!gameStarted) return@setOnClickListener
             val speed = bridge.cycleSpeed()
-            button.text = "${speed}×"
+            (view as Button).text = "${speed}×"
             statusText.text = "ED4 Mobile · CUT3 · ${speed}×"
         }
         findViewById<Button>(R.id.btnQuickSave).setOnClickListener {
