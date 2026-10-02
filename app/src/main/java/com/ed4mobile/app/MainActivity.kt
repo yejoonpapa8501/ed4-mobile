@@ -96,23 +96,31 @@ class MainActivity : AppCompatActivity() {
     inner class NativeEd4View : View(this) {
         private val p=Paint(Paint.ANTI_ALIAS_FLAG)
         private var world:Bitmap?=null
+        private var heroFrames=emptyArray<Bitmap>()
+        private var facing=6
+        private var walkTime=0f
+        private var moving=false
         private var info="ED4 DATA"
         private var px=.50f; private var py=.55f
         private var tx=px; private var ty=py
         private var lastFrame=0L
+        private var speed=1
+        private val camera=Rect()
+        private val saves=getSharedPreferences("native-save", MODE_PRIVATE)
         private var menu=false
         private var dialogue=true; private var introStage=0; private var samsung:Bitmap?=null; private var mantra:Bitmap?=null
 
-        fun loadGame(file:File,text:String) { world=decodePcx16(file.readBytes()); info=text; samsung=File(filesDir,"ed4native/SAMSUNG.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; mantra=File(filesDir,"ed4native/MANTRA.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; introStage=if(samsung!=null) 0 else 2; invalidate() }
-        fun toggleMenu(){ menu=!menu; invalidate() }
+        fun loadGame(file:File,text:String) { val scene=Ed4Resources.scene(file.parentFile!!); world=scene.bitmap; heroFrames=scene.hero; px=520f/world!!.width; py=740f/world!!.height; tx=px; ty=py; info=text; samsung=File(filesDir,"ed4native/SAMSUNG.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; mantra=File(filesDir,"ed4native/MANTRA.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; introStage=if(samsung!=null) 0 else 2; invalidate() }
+        fun toggleMenu(){ if(introStage<2) introStage=2 else if(dialogue) dialogue=false else menu=!menu; lastFrame=0L; invalidate() }
 
         override fun onDraw(c:Canvas) {
             super.onDraw(c); c.drawColor(Color.BLACK)
             val bmp=world
             if(bmp==null){ drawImport(c); return }
-            advanceMovement()
+            if(introStage<2){ drawIntro(c,if(introStage==0) samsung else mantra); return }
+            if(!menu && !dialogue) advanceMovement() else lastFrame=0L
             drawWorld(c,bmp)
-            drawHero(c,width*.5f,height*.52f)
+            drawHero(c,(px*bmp.width-camera.left)*width/camera.width(),(py*bmp.height-camera.top)*height/camera.height())
             drawHud(c)
             if(dialogue) drawDialogue(c)
             if(menu) drawMenu(c)
@@ -126,31 +134,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         private fun drawWorld(c:Canvas,b:Bitmap){
-            val viewW=(b.width*.62f).toInt().coerceAtLeast(1)
-            val viewH=(b.height*.62f).toInt().coerceAtLeast(1)
+            val viewW=400.coerceAtMost(b.width)
+            val viewH=(viewW*height.toFloat()/width).toInt().coerceIn(1,b.height)
             val cx=(px*b.width).toInt(); val cy=(py*b.height).toInt()
             val l=(cx-viewW/2).coerceIn(0,(b.width-viewW).coerceAtLeast(0))
             val t=(cy-viewH/2).coerceIn(0,(b.height-viewH).coerceAtLeast(0))
-            val src=Rect(l,t,l+viewW,t+viewH)
+            camera.set(l,t,l+viewW,t+viewH)
+            val src=camera
             val dst=Rect(0,0,width,height)
             p.isFilterBitmap=false; c.drawBitmap(b,src,dst,p)
-            p.color=Color.argb(70,0,0,20); c.drawRect(0f,0f,width.toFloat(),height.toFloat(),p)
+
         }
 
         private fun drawHero(c:Canvas,x:Float,y:Float){
-            val s=(width/900f).coerceIn(.8f,1.7f)
-            p.color=Color.rgb(35,25,22); c.drawOval(RectF(x-15*s,y-34*s,x+15*s,y-6*s),p)
-            p.color=Color.rgb(236,199,157); c.drawCircle(x,y-20*s,10*s,p)
-            p.color=Color.rgb(58,84,126); c.drawRect(x-12*s,y-9*s,x+12*s,y+20*s,p)
-            p.color=Color.rgb(230,224,205); c.drawRect(x-8*s,y+20*s,x-1*s,y+39*s,p); c.drawRect(x+2*s,y+20*s,x+9*s,y+39*s,p)
-            p.color=Color.rgb(118,75,45); c.drawRect(x-10*s,y+36*s,x-1*s,y+42*s,p); c.drawRect(x+2*s,y+36*s,x+11*s,y+42*s,p)
-            p.style=Paint.Style.STROKE; p.strokeWidth=2*s; p.color=Color.WHITE; c.drawCircle(x,y-20*s,11*s,p); p.style=Paint.Style.FILL
+            if(heroFrames.isEmpty()) return
+            val frame=facing+if(moving && (walkTime*8).toInt()%2==1) 1 else 0
+            val scale=width.toFloat()/camera.width()
+            p.isFilterBitmap=false
+            c.drawBitmap(heroFrames[frame],null,RectF(x-16*scale,y-44*scale,x+16*scale,y+4*scale),p)
         }
 
         private fun drawHud(c:Canvas){
             p.color=Color.argb(210,7,14,25); c.drawRect(0f,0f,width.toFloat(),64f,p)
             p.color=Color.rgb(232,210,145); p.textSize=25f; c.drawText("영웅전설 IV  주홍물방울",22f,39f,p)
-            p.color=Color.LTGRAY; p.textSize=14f; c.drawText(info,22f,58f,p)
+            p.color=Color.LTGRAY; p.textSize=14f; c.drawText("이동 속도 ${speed}×  ·  상단 터치: 속도 변경  ·  뒤로가기: 메뉴",22f,58f,p)
             val r=RectF(width-220f,78f,width-18f,174f)
             p.color=Color.argb(220,5,12,24); c.drawRoundRect(r,8f,8f,p)
             p.style=Paint.Style.STROKE; p.strokeWidth=2f; p.color=Color.rgb(208,181,104); c.drawRoundRect(r,8f,8f,p); p.style=Paint.Style.FILL
@@ -163,7 +170,7 @@ class MainActivity : AppCompatActivity() {
             p.color=Color.argb(232,6,12,24); c.drawRoundRect(r,10f,10f,p)
             p.style=Paint.Style.STROKE; p.strokeWidth=3f; p.color=Color.rgb(214,187,110); c.drawRoundRect(r,10f,10f,p); p.style=Paint.Style.FILL
             p.color=Color.rgb(235,211,140); p.textSize=20f; c.drawText("어빈",94f,height-112f,p)
-            p.color=Color.WHITE; p.textSize=19f; c.drawText("이제부터 실제 ED4 데이터를 하나씩 해석해 나간다.",94f,height-75f,p)
+            p.color=Color.WHITE; p.textSize=19f; c.drawText("원본 마을을 터치하여 둘러보실 수 있습니다.",94f,height-75f,p)
             p.color=Color.LTGRAY; p.textSize=14f; c.drawText("화면을 터치하면 이동 · 대화창 터치로 닫기",94f,height-46f,p)
         }
 
@@ -174,7 +181,7 @@ class MainActivity : AppCompatActivity() {
             p.textAlign=Paint.Align.CENTER; p.color=Color.WHITE; p.textSize=27f
             c.drawText("메 뉴",width*.5f,height*.28f,p)
             p.textSize=22f
-            arrayOf("아이템","마법","장비","상태","세이브").forEachIndexed{i,s->c.drawText(s,width*.5f,height*(.39f+i*.075f),p)}
+            arrayOf("계속하기","이동 속도 ${speed}×","위치 저장","위치 불러오기","오프닝 다시 보기").forEachIndexed{i,s->c.drawText(s,width*.5f,height*(.39f+i*.075f),p)}
             p.textAlign=Paint.Align.LEFT
         }
 
@@ -187,17 +194,39 @@ class MainActivity : AppCompatActivity() {
         private fun advanceMovement(){
             val now=System.nanoTime(); if(lastFrame==0L) lastFrame=now
             val dt=((now-lastFrame)/1_000_000_000f).coerceAtMost(.05f); lastFrame=now
-            val dx=tx-px; val dy=ty-py; val d=sqrt(dx*dx+dy*dy)
-            if(d>.001f){ val step=(.20f*dt).coerceAtMost(d); px+=dx/d*step; py+=dy/d*step; postInvalidateOnAnimation() }
+            val b=world ?: return
+            val dx=(tx-px)*b.width; val dy=(ty-py)*b.height; val d=sqrt(dx*dx+dy*dy)
+            moving=d>.1f
+            if(moving){
+                facing=if(kotlin.math.abs(dx)>kotlin.math.abs(dy)) { if(dx<0) 0 else 4 } else { if(dy<0) 2 else 6 }
+                walkTime+=dt*speed
+                val step=(90f*speed*dt).coerceAtMost(d); px+=dx/d*step/b.width; py+=dy/d*step/b.height; postInvalidateOnAnimation() }
         }
 
         override fun onTouchEvent(e:MotionEvent):Boolean{
             if(e.action!=MotionEvent.ACTION_DOWN) return true
             if(world==null){ chooseGame.launch(arrayOf("application/zip","*/*")); return true }
-            if(menu){ menu=false; invalidate(); return true }
-            if(dialogue && e.y>height-170){ dialogue=false; invalidate(); return true }
-            tx=(px+(e.x/width-.5f)*.34f).coerceIn(.05f,.95f)
-            ty=(py+(e.y/height-.52f)*.34f).coerceIn(.08f,.92f)
+            if(introStage<2){ introStage++; if(introStage==1 && mantra==null) introStage=2; lastFrame=0L; invalidate(); return true }
+            if(menu){
+                if(e.x in width*.34f..width*.66f){
+                    val row=kotlin.math.floor((e.y/height-.345f)/.075f).toInt()
+                    when(row){
+                        0 -> menu=false
+                        1 -> speed=speed%3+1
+                        2 -> { saves.edit().putFloat("x",px).putFloat("y",py).putInt("speed",speed).apply(); Toast.makeText(context,"위치를 저장했습니다",Toast.LENGTH_SHORT).show(); menu=false }
+                        3 -> { if(saves.contains("x")){ px=saves.getFloat("x",.5f); py=saves.getFloat("y",.55f); tx=px; ty=py; speed=saves.getInt("speed",1).coerceIn(1,3); menu=false } else Toast.makeText(context,"저장된 위치가 없습니다",Toast.LENGTH_SHORT).show() }
+                        4 -> { introStage=if(samsung!=null) 0 else if(mantra!=null) 1 else 2; menu=false }
+                    }
+                } else menu=false
+                lastFrame=0L; invalidate(); return true
+            }
+            if(dialogue){ dialogue=false; lastFrame=0L; invalidate(); return true }
+            if(e.y<64){ speed=speed%3+1; invalidate(); return true }
+            val b=world ?: return true
+            if(camera.width()==0 || camera.height()==0) return true
+            tx=((camera.left+e.x/width*camera.width())/b.width).coerceIn(0f,1f)
+            ty=((camera.top+e.y/height*camera.height())/b.height).coerceIn(0f,1f)
+            lastFrame=0L
             invalidate(); return true
         }
     }
@@ -207,7 +236,7 @@ class MainActivity : AppCompatActivity() {
         val bpl=u16(b,0); val h=u16(b,2)
         if(bpl !in 1..160 || h !in 1..600 || 52+bpl*h*4>b.size) return null
         val w=bpl*8; val pal=IntArray(16)
-        for(i in 0 until 16){ val o=4+i*3; pal[i]=Color.rgb((b[o].toInt() and 255)*4.coerceAtMost(255),(b[o+1].toInt() and 255)*4.coerceAtMost(255),(b[o+2].toInt() and 255)*4.coerceAtMost(255)) }
+        for(i in 0 until 16){ val o=4+i*3; pal[i]=Color.rgb(((b[o].toInt() and 255)*4).coerceAtMost(255),((b[o+1].toInt() and 255)*4).coerceAtMost(255),((b[o+2].toInt() and 255)*4).coerceAtMost(255)) }
         val dataOff=52; val planeSize=bpl*h; val pixels=IntArray(w*h)
         for(y in 0 until h) for(x in 0 until w){ var idx=0; for(pl in 0 until 4){ val v=b[dataOff+pl*planeSize+y*bpl+x/8].toInt() and 255; if((v and (0x80 shr (x and 7)))!=0) idx=idx or (1 shl pl) }; pixels[y*w+x]=pal[idx] }
         return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888)
