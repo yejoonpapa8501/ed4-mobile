@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         val planes=b[65].toInt() and 255; val bytesPerLine=u16(66)
         require(planes in 1..4) { "지원하지 않는 PCX plane 수: $planes" }
         val pal=IntArray(16)
-        for(i in 0 until 16){ val o=16+i*3; pal[i]=Color.rgb(b[o].toInt()and255,b[o+1].toInt()and255,b[o+2].toInt()and255) }
+        for(i in 0 until 16){ val o=16+i*3; pal[i]=Color.rgb(b[o].toInt() and 255,b[o+1].toInt() and 255,b[o+2].toInt() and 255) }
         val scan=ByteArray(bytesPerLine*planes); val pixels=IntArray(w*h); var p=128
         for(y in 0 until h){
             var q=0
