@@ -12,8 +12,8 @@ android {
         minSdk = 23
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }
-        versionCode = 3
-        versionName = "0.4-phase5"
+        versionCode = 10
+        versionName = "1.0-native-prototype"
     }
 
     buildTypes {
