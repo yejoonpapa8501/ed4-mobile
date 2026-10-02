@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun importOriginalData(uri: Uri): String {
         val dir = File(filesDir, "ed4native").apply { mkdirs() }
-        var entries=0; var dataFiles=0; var effects=0; var aflbEntries=0
+        var entries=0; var dataFiles=0; var effects=0; var aflbEntries=0; var extracted=0
         var driver=false; var exe=false; var back=false
         val input=contentResolver.openInputStream(uri) ?: error("ZIP을 읽을 수 없습니다.")
         ZipInputStream(BufferedInputStream(input)).use { zin ->
@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         require(driver && exe && back) { "영웅전설4 원본 구조를 확인하지 못했습니다." }
-        val info="원본 ZIP $entries · DATA $dataFiles · AFLB 리소스 $aflbEntries · EFC $effects"
+        val info="원본 ZIP $entries · DATA $dataFiles · AFLB $aflbEntries / 추출 $extracted · EFC $effects"
         File(dir,"meta.txt").writeText(info)
         return info
     }
