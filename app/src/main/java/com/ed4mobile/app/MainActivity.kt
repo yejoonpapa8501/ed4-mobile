@@ -165,7 +165,7 @@ class MainActivity : AppCompatActivity() {
             p.textSize=20f; c.drawText("화면을 눌러 ed4.zip 선택",width/2f,height/2f+18,p); p.textAlign=Paint.Align.LEFT
         }
 
-        private fun animate(){
+        private fun advanceMovement(){
             val now=System.nanoTime(); if(lastFrame==0L) lastFrame=now
             val dt=((now-lastFrame)/1_000_000_000f).coerceAtMost(.05f); lastFrame=now
             val dx=tx-px; val dy=ty-py; val d=sqrt(dx*dx+dy*dy)
