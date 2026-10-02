@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity() {
         private var tx=px; private var ty=py
         private var lastFrame=0L
         private var menu=false
-        private var dialogue=true\n        private var introStage=0\n        private var samsung:Bitmap?=null\n        private var mantra:Bitmap?=null
+        private var dialogue=true; private var introStage=0; private var samsung:Bitmap?=null; private var mantra:Bitmap?=null
 
         fun loadGame(file:File,text:String) { world=decodePcx16(file.readBytes()); info=text; samsung=File(filesDir,"ed4native/SAMSUNG.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; mantra=File(filesDir,"ed4native/MANTRA.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; introStage=if(samsung!=null) 0 else 2; invalidate() }
         fun toggleMenu(){ menu=!menu; invalidate() }
