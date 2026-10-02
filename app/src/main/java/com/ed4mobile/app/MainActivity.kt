@@ -155,7 +155,13 @@ class MainActivity : AppCompatActivity() {
                 when(k){ "L"->px-=.015f; "R"->px+=.015f; "U"->py-=.02f; "D"->py+=.02f }
                 px=px.coerceIn(.05f,.95f); py=py.coerceIn(.12f,.92f); invalidate(); return true
             }
-            showHelp=false; invalidate(); return true
+            // Native mobile control: tap anywhere on the map to move the marker there.
+            // D-pad remains only as a temporary fine-control fallback during prototyping.
+            px=(e.x/width.toFloat()).coerceIn(.05f,.95f)
+            py=(e.y/height.toFloat()).coerceIn(.12f,.92f)
+            showHelp=false
+            invalidate()
+            return true
         }
     }
 
