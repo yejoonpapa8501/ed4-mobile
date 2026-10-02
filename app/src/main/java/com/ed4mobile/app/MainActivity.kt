@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
                         game.restoreY = saves.getFloat("resume.y", 660f)
                         game.speed = saves.getInt("resume.speed", 2).coerceIn(1, 3)
                     }
-                    game.setScene(it)
+                    game.applyScene(it)
                 }.onFailure {
                     game.restoreX = null; game.restoreY = null
                     game.message = if (game.scene == null) "불러오기 실패\n화면을 눌러 ZIP을 다시 선택해 주세요" else ""
@@ -126,8 +126,8 @@ class MainActivity : AppCompatActivity() {
     private fun choose() { if (!loading) picker.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) }
     private fun saveResume() {
         if (loading || game.scene == null) return
-        saves.edit().putInt("resume.scene", game.sceneIndex).putFloat("resume.x", game.x)
-            .putFloat("resume.y", game.y).putInt("resume.speed", game.speed).apply()
+        saves.edit().putInt("resume.scene", game.sceneIndex).putFloat("resume.x", game.heroX)
+            .putFloat("resume.y", game.heroY).putInt("resume.speed", game.speed).apply()
     }
     private fun showMenu() {
         if (game.scene == null) { choose(); return }
@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("영웅전설 IV").setItems(items) { _, item ->
             when (item) {
                 1 -> game.speed = game.speed % 3 + 1
-                2 -> { saves.edit().putInt("scene", game.sceneIndex).putFloat("x", game.x).putFloat("y", game.y).putInt("speed", game.speed).apply(); toast("탐색 위치를 저장했습니다") }
+                2 -> { saves.edit().putInt("scene", game.sceneIndex).putFloat("x", game.heroX).putFloat("y", game.heroY).putInt("speed", game.speed).apply(); toast("탐색 위치를 저장했습니다") }
                 3 -> if (saves.contains("x")) {
                     game.restoreX = saves.getFloat("x", 512f); game.restoreY = saves.getFloat("y", 640f)
                     game.speed = saves.getInt("speed", 2).coerceIn(1, 3)
@@ -169,9 +169,9 @@ class MainActivity : AppCompatActivity() {
         private var logos: List<Bitmap> = emptyList()
         private var logoIndex = 0
         var speed = 2
-        var x = 536f; var y = 660f
+        var heroX = 536f; var heroY = 660f
         var restoreX: Float? = null; var restoreY: Float? = null
-        private var targetX = x; private var targetY = y
+        private var targetX = heroX; private var targetY = heroY
         private var clock = 0L
         private var walked = 0f
         private var direction = 3
@@ -181,14 +181,14 @@ class MainActivity : AppCompatActivity() {
         private var menuButton = RectF()
         fun resetClock() { clock = 0L; invalidate() }
         fun skipOpening() { opening = false; resetClock() }
-        fun setScene(next: Ed4Assets.Scene) {
+        fun applyScene(next: Ed4Assets.Scene) {
             val first = scene == null
             scene?.let { it.image.recycle(); it.frames.forEach { b -> b.recycle() } }
             scene = next; sceneIndex = assets!!.sceneIds.indexOf(next.id); message = ""
             if (first) { logos = assets?.openingImages() ?: emptyList(); logoIndex = 0; opening = logos.isNotEmpty() }
-            x = (restoreX ?: minOf(536f, next.image.width * .45f)).coerceIn(16f, next.image.width - 16f)
-            y = (restoreY ?: minOf(660f, next.image.height * .55f)).coerceIn(48f, next.image.height - 16f)
-            restoreX = null; restoreY = null; targetX = x; targetY = y; walked = 0f; resetClock()
+            heroX = (restoreX ?: minOf(536f, next.image.width * .45f)).coerceIn(16f, next.image.width - 16f)
+            heroY = (restoreY ?: minOf(660f, next.image.height * .55f)).coerceIn(48f, next.image.height - 16f)
+            restoreX = null; restoreY = null; targetX = heroX; targetY = heroY; walked = 0f; resetClock()
         }
         override fun onDraw(c: Canvas) {
             c.drawColor(Color.rgb(10, 14, 21))
@@ -207,12 +207,12 @@ class MainActivity : AppCompatActivity() {
             val now = System.nanoTime()
             val dt = if (clock == 0L) 0f else ((now - clock) / 1_000_000_000f).coerceAtMost(.05f)
             clock = now
-            val dx = targetX - x; val dy = targetY - y; val distance = hypot(dx, dy)
+            val dx = targetX - heroX; val dy = targetY - heroY; val distance = hypot(dx, dy)
             val moving = distance > .1f && !paused
             if (moving) {
                 direction = if (abs(dx) > abs(dy)) if (dx < 0) 0 else 2 else if (dy < 0) 1 else 3
                 val step = minOf(80f * speed * dt, distance)
-                x += dx / distance * step; y += dy / distance * step; walked += step
+                heroX += dx / distance * step; heroY += dy / distance * step; walked += step
             }
             val scale = width / 640f
             val top = 38f * scale; val bottom = 25f * scale
@@ -220,8 +220,8 @@ class MainActivity : AppCompatActivity() {
             val pixelScale = maxOf(field.width() / minOf(640f, s.image.width.toFloat()), field.height() / s.image.height)
             val vw = field.width() / pixelScale
             val vh = field.height() / pixelScale
-            val left = (x - vw / 2).coerceIn(0f, s.image.width - vw)
-            val upper = (y - vh * .60f).coerceIn(0f, s.image.height - vh)
+            val left = (heroX - vw / 2).coerceIn(0f, s.image.width - vw)
+            val upper = (heroY - vh * .60f).coerceIn(0f, s.image.height - vh)
             camera.set(left, upper, left + vw, upper + vh)
             brush.isFilterBitmap = false
             c.drawBitmap(s.image, Rect(camera.left.toInt(), camera.top.toInt(), camera.right.toInt(), camera.bottom.toInt()), field, brush)
@@ -233,9 +233,9 @@ class MainActivity : AppCompatActivity() {
                 c.drawOval(RectF(sx(targetX) - 7 * scale, sy(targetY) - 3 * scale, sx(targetX) + 7 * scale, sy(targetY) + 3 * scale), brush); brush.style = Paint.Style.FILL
             }
             brush.color = Color.argb(95, 0, 0, 0)
-            c.drawOval(RectF(sx(x) - 11 * scale, sy(y) - 3 * scale, sx(x) + 11 * scale, sy(y) + 3 * scale), brush)
+            c.drawOval(RectF(sx(heroX) - 11 * scale, sy(heroY) - 3 * scale, sx(heroX) + 11 * scale, sy(heroY) + 3 * scale), brush)
             val frame = direction * 2 + if (moving) (walked / 9).toInt() % 2 else 0
-            c.drawBitmap(s.frames[frame], null, RectF(sx(x - 16), sy(y - 46), sx(x + 16), sy(y + 2)), brush)
+            c.drawBitmap(s.frames[frame], null, RectF(sx(heroX - 16), sy(heroY - 46), sx(heroX + 16), sy(heroY + 2)), brush)
             c.restore()
             brush.color = Color.rgb(12, 21, 34); c.drawRect(0f, 0f, width.toFloat(), top, brush)
             brush.color = Color.rgb(219, 197, 142); brush.textSize = 16 * scale
