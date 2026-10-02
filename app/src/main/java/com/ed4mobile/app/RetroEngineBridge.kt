@@ -68,15 +68,22 @@ class RetroEngineBridge(private val context: Context) {
                     (
                         "@echo off\r\n" +
                         "cd ed4\r\n" +
-                        "if exist NOSOUND.BAT (\r\n" +
-                        "  call NOSOUND.BAT\r\n" +
-                        ") else (\r\n" +
-                        "  ED4.EXE\r\n" +
-                        ")\r\n" +
+                        "if exist NOSOUND.BAT goto runbat\r\n" +
+                        "if exist ED4.EXE goto runexe\r\n" +
+                        "echo ED4 launcher: no executable found\r\n" +
+                        "pause\r\n" +
+                        "goto end\r\n" +
+                        ":runbat\r\n" +
+                        "call NOSOUND.BAT\r\n" +
+                        "goto failed\r\n" +
+                        ":runexe\r\n" +
+                        "ED4.EXE\r\n" +
+                        ":failed\r\n" +
                         "echo.\r\n" +
-                        "echo ED4 exited or failed. ErrorLevel=%ERRORLEVEL%\r\n" +
-                        "echo Please capture this screen for diagnosis.\r\n" +
-                        "pause\r\n"
+                        "echo ED4 returned to DOS. ErrorLevel=%ERRORLEVEL%\r\n" +
+                        "echo Capture this screen for diagnosis.\r\n" +
+                        "pause\r\n" +
+                        ":end\r\n"
                     ).toByteArray(Charsets.US_ASCII)
                 )
                 zout.closeEntry()
