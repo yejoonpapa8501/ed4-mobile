@@ -1,18 +1,29 @@
 # 영웅전설4 Android 통합 작업본
 
-DOS 한글판 원본 데이터를 읽는 독립 Android 필드 엔진입니다. 게임 자료는 저장소와 APK에 포함하지 않습니다. 설치 후 보유한 `ed4.zip`을 선택합니다.
+DOS 한글판 원본 DAT를 읽는 독립 Android 엔진입니다. 게임 자료는 저장소와 APK에 포함하지 않습니다. 설치 후 보유한 `ed4.zip`을 선택합니다.
 
-현재: 원본 시작 마을 및 14개 맵, 어빈 보행 8프레임, 터치 목적지 이동·카메라, 1~3배 속도, 탐색 위치 저장/자동 복귀, 원본 삼성·만트라 도입 화면.
+현재는 **원본 도입부·필드·시나리오 실행 시험판**입니다. 실행 파일의 초기값에 따라 도입부 맵(리소스 55)에서 시작합니다. 처음 대사, 원본 캐릭터·소품 동작 합성, 터치 이동, 지형 높이와 발밑 마스크를 이용한 통행 판정, 마을 NPC 대화, 일부 출입구 이벤트, 진행 상태 저장/복원을 구현했습니다. 메뉴에서 14개 원본 맵을 탐색할 수 있습니다.
 
-현재는 **필드 탐색판**입니다. 원작 NPC·이벤트·충돌/통행·맵 출입구·전투·음악은 미구현입니다. [작업 기준과 남은 과제](WORK_STATUS.md)를 확인해 주세요.
+**처음부터 엔딩까지 플레이할 수 있는 완성판은 아닙니다.** NPC 자동 행동·선택지·미지원 이벤트, 광역 맵 구역 전환, 완전한 충돌·길찾기·앞뒤 가림, 전투·마법·아이템 화면·음악·원작 세이브 호환이 남았습니다. 미지원 명령은 실행을 중단하고 해당 이벤트의 플래그·맵 변경을 되돌립니다. 상점·전투를 임시 기능으로 대신하지 않습니다. [작업 기준과 검증 결과](WORK_STATUS.md)를 확인해 주세요.
 
-## 원본 검증·분석
+## 원본 검증
 
 ```sh
 python tools/verify_assets.py /path/to/ed4
 python tools/inspect_scenario.py /path/to/ed4 /tmp/ed4-text-index.json
 ```
 
-검증 도구는 원본 AFLB/BZ 리소스와 14개 맵을 검사합니다. 대사 분석 도구는 CP949 한글 텍스트 후보와 정확한 리소스/바이트 위치를 기록합니다. 이벤트 실행 순서와 조건을 아직 해석하지 않으므로 이를 게임 시나리오 실행으로 취급하지 않습니다.
+JVM 네이티브 엔진 검증에는 Kotlin/JVM 컴파일러를 사용합니다.
 
-GitHub Actions가 main 변경마다 테스트 APK를 빌드합니다.
+```sh
+kotlinc app/src/main/java/com/ed4mobile/app/Ed4Archive.kt \
+  app/src/main/java/com/ed4mobile/app/Ed4Scenario.kt \
+  app/src/main/java/com/ed4mobile/app/Ed4Terrain.kt \
+  app/src/main/java/com/ed4mobile/app/Ed4Layout.kt \
+  tools/NativeScenarioCheck.kt -include-runtime -d /tmp/ed4-check.jar
+java -jar /tmp/ed4-check.jar /path/to/ed4
+```
+
+이 검증은 실제 도입부 초기화·첫 대사, 원본 지형 이동, 마을 NPC 5명의 대사 완료, 14개 맵의 그래픽·동작 테이블을 확인합니다. 전체 스토리 완료를 검증하는 테스트는 아닙니다.
+
+GitHub Actions는 main 변경마다 JVM 단위 테스트와 Android APK 빌드를 실행합니다.

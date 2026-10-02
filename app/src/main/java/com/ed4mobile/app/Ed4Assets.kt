@@ -21,9 +21,17 @@ class Ed4Assets(private val directory: File) {
     }
     val sceneIds = listOf(0, 4, 10, 14, 15, 21, 26, 30, 34, 39, 43, 47, 51, 55)
     data class Scene(val image: Bitmap, val frames: List<Bitmap>, val id: Int, val unsupportedCells: Int,
-        val script: ByteArray, val seed: ByteArray, val npcFrames: Map<Int, List<Bitmap>>, val stage: Int,
-        val spawnX: Float, val spawnY: Float, val characterNames: List<String>)
+        val script: ByteArray, val seed: ByteArray, val npcFrames: Map<Int, Map<Int, Bitmap>>, val stage: Int,
+        val spawnX: Float, val spawnY: Float, val characterNames: List<String>,
+        val grid: ByteArray, val definitions: ByteArray, val tilePixels: List<IntArray>, val colors: IntArray,
+        val footprints: Map<Int,Int>) {
+        val terrain = Ed4Terrain(grid, definitions)
+    }
 
+    fun initialScene(): Scene {
+        val base = Ed4Archive.word(engine,0xffa4)*16
+        return sceneResource(Ed4Archive.word(engine,base+0x12),engine[base+0x19].toInt() and 255)
+    }
     fun scene(index: Int): Scene {
         return sceneResource(sceneIds[index.coerceIn(sceneIds.indices)])
     }
@@ -66,33 +74,65 @@ class Ed4Assets(private val directory: File) {
             val image = tileImages[if (tile >= 512) source.size + tile - 512 else tile]
             canvas.drawBitmap(image, (i % 128 * 16).toFloat(), (i / 128 * 16).toFloat(), paint)
         }
-        val cropped = Bitmap.createBitmap(output, 0, 0, maxX, maxY)
+        val subset = Bitmap.createBitmap(output, 0, 0, maxX, maxY)
+        val cropped = subset.copy(Bitmap.Config.ARGB_8888, true)
+        if (subset !== output) subset.recycle()
         if (cropped !== output) output.recycle()
         tileImages.forEach { it.recycle() }
         val stateBase = Ed4Archive.word(engine, 0xffa4) * 16
         val stageOffset = 46 + stage * 14
         require(stageOffset + 14 <= metadata.size) { "맵 배치 데이터 범위 초과" }
         val spriteOffset = Ed4Archive.word(metadata, stageOffset)
-        val sprites = mutableMapOf<Int, List<Bitmap>>()
+        val motions = mutableMapOf<Int,ByteArray>()
+        var motionPointer = Ed4Archive.word(metadata,stageOffset+2)
+        var motionRecords = 0
+        while (motionPointer < metadata.size && (metadata[motionPointer].toInt() and 255) != 255 && motionRecords++ < 64) {
+            require(motionPointer+4 <= metadata.size)
+            val slot = metadata[motionPointer].toInt() and 255
+            val span = metadata[motionPointer+1].toInt() and 255
+            val data = resource(Ed4Archive.word(metadata,motionPointer+2))
+            require(data.size == span*64 && slot+span <= 32)
+            for (frame in 0 until span*8) motions[slot*8+frame] = data.copyOfRange(frame*8,frame*8+8)
+            motionPointer += 4
+        }
+        val footprints = motions.mapValues { (_,pose) -> pose.indices.fold(0) { mask,i -> if (pose[i].toInt()!=0) mask or (1 shl i) else mask } }
+        val sprites = mutableMapOf<Int, Map<Int,Bitmap>>()
         var pointer = spriteOffset
         var records = 0
         while (pointer < metadata.size && (metadata[pointer].toInt() and 255) != 255 && records++ < 64) {
             require(pointer + 4 <= metadata.size)
             val slot = metadata[pointer].toInt() and 255
             val resource = Ed4Archive.word(metadata, pointer + 2)
+            val rows = metadata[pointer+1].toInt() and 255
             val actorResource = if (resource <= 3) 0xc010 + resource else resource
-            if (actorResource ushr 12 == 12) runCatching { heroFrames(palette, actorResource and 4095) }.getOrNull()?.let { sprites[slot] = it }
+            runCatching { actorFrames(palette,actorResource,rows,motions) }.getOrNull()?.let { sprites[slot] = it }
             pointer += 4
         }
-        val position = Ed4Archive.word(metadata, stageOffset + 4)
-        return Scene(cropped, heroFrames(palette), id, missing, metadata,
+        val position = Ed4Archive.word(metadata, 36 + stage * 14)
+        val hero = sprites[0] ?: actorFrames(palette,0xc010,4,motions)
+        return Scene(cropped, List(8) { hero[it] ?: error("주인공 동작 데이터 누락") }, id, missing, metadata,
             engine.copyOfRange(stateBase, stateBase + 0x2000), sprites, stage,
             ((position and 255) + 1) * 16f, ((position ushr 8) + 1) * 16f,
             List(13) { i ->
                 val start = stateBase + Ed4Archive.word(engine, stateBase + 0x2614 + i * 2)
                 val end = (start until engine.size).first { engine[it].toInt() == 0 }
                 String(engine, start, end - start, java.nio.charset.Charset.forName("MS949"))
-            })
+            }, grid, definitions, source + combined, palette, footprints)
+    }
+    fun refreshMap(scene: Scene, nextGrid: ByteArray) {
+        require(nextGrid.size == scene.grid.size)
+        val canvas = Canvas(scene.image)
+        val paint = Paint().apply { isFilterBitmap = false }
+        for (offset in nextGrid.indices step 2) if (nextGrid[offset] != scene.grid[offset] || nextGrid[offset + 1] != scene.grid[offset + 1]) {
+            val tile = Ed4Archive.word(nextGrid, offset) ushr 6
+            require(tile < 256 || tile >= 512) { "지원하지 않는 맵 타일" }
+            val index = if (tile >= 512) 256 + tile - 512 else tile
+            val pixels = scene.tilePixels.getOrNull(index) ?: error("지원하지 않는 맵 타일")
+            val bitmap = Bitmap.createBitmap(IntArray(256) { scene.colors[pixels[it]] },16,16,Bitmap.Config.ARGB_8888)
+            canvas.drawBitmap(bitmap, (offset / 2 % 128 * 16).toFloat(), (offset / 2 / 128 * 16).toFloat(), paint)
+            bitmap.recycle()
+        }
+        nextGrid.copyInto(scene.grid)
     }
 
     private fun palette(graphics: ByteArray): IntArray {
@@ -129,20 +169,23 @@ class Ed4Assets(private val directory: File) {
         }.getOrNull()
     }
 
-    private fun heroFrames(palette: IntArray, resource: Int = 16): List<Bitmap> {
-        val source = tiles(actors.resource(resource))
-        require(source.size >= 48)
-        // Eight frames: left pair, back pair, right pair, front pair.
-        return List(8) { frame ->
-            val colors = IntArray(32 * 48)
-            for (row in 0 until 3) for (col in 0 until 2) {
-                val tile = source[row * 16 + frame * 2 + col]
+    private fun actorFrames(palette: IntArray, resourceId: Int, rows: Int, motions: Map<Int,ByteArray>): Map<Int,Bitmap> {
+        val data = resource(resourceId)
+        require(rows in 1..8 && data.size == rows * 2048) { "미지원 캐릭터 그래픽 형식" }
+        val source = tiles(data)
+        // DATA11 800b/89xx: each motion contains four bottom-to-top references per column.
+        return motions.filterValues { pose -> pose.all { (it.toInt() and 255) <= source.size } }.mapValues { (_,pose) ->
+            val colors = IntArray(32*64)
+            for (col in 0..1) for (row in 0..3) {
+                val reference = pose[col*4+row].toInt() and 255
+                if (reference == 0) continue
+                val tile = source[reference-1]
                 for (y in 0 until 16) for (x in 0 until 16) {
-                    val v = tile[y * 16 + x]
-                    colors[(row * 16 + y) * 32 + col * 16 + x] = if (v == 15) Color.TRANSPARENT else palette[v]
+                    val v = tile[y*16+x]
+                    colors[((3-row)*16+y)*32+col*16+x] = if (v==15) Color.TRANSPARENT else palette[v]
                 }
             }
-            Bitmap.createBitmap(colors, 32, 48, Bitmap.Config.ARGB_8888)
+            Bitmap.createBitmap(colors,32,64,Bitmap.Config.ARGB_8888)
         }
     }
 }

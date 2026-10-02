@@ -4,13 +4,16 @@ import java.nio.charset.Charset
 
 /** Native translation of DATA11's c57d/c595 dispatcher and dc72 expression machine.
  * Unknown instructions stop execution; never guess their operand lengths. */
-class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterNames: List<String>) {
+class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterNames: List<String>, terrain: ByteArray = ByteArray(0)) {
     val memory = seed.copyOf(0x2000)
+    val map = terrain.copyOf()
+    private var mapBefore: ByteArray? = null
+    private data class Return(val pc: Int, val actor: Int)
     var pc = 0; private set
     var actor = 0x20
     var speaker = ""
     private var ax = 0
-    private val returns = ArrayDeque<Int>()
+    private val returns = ArrayDeque<Return>()
     private var active = false
     private var budget = 0
     private var before: ByteArray? = null
@@ -49,6 +52,7 @@ class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterN
             if (tag == 0x7b) {
                 val instruction = next()
                 val result = when (instruction) {
+                    0x2b -> if (byte(0x1b) and 1 != 0) 0xffff else 0
                     0x69 -> { val item = next(); (byte(0x8e0 + item / 2) ushr ((item and 1) * 4)) and 3 }
                     else -> error("미지원 중첩 계산 명령 %02X".format(instruction))
                 }
@@ -93,41 +97,70 @@ class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterN
         }
         error("이벤트 계산 실행 한도")
     }
+    /** c751 standard indoor trigger records; overlay/world regions use another format. */
+    fun trigger(input: Int): Int {
+        if (Ed4Archive.word(script, 2) != 0) return 0
+        val count = Ed4Archive.word(script, 30); val base = Ed4Archive.word(script, 28)
+        require(count <= 512 && base + count * 8 <= script.size)
+        val directionBit = intArrayOf(4,1,8,2)[(byte(0x23) and 6) / 2]
+        val directional = if (input and 15 == 0 && input and 0x20 != 0) directionBit else input and 15
+        for (index in 0 until count) {
+            val p = base + index * 8
+            fun b(offset: Int) = script[p + offset].toInt() and 255
+            val flags = b(3)
+            if (flags and 0x10 != 0) continue // alternate actor triggers need their own actor state
+            val mask = flags and 0x2f
+            if (mask != 0 && mask and (if (flags and 0x20 != 0) directional else input) == 0) continue
+            val x = byte(0x20); val y = byte(0x21); val z = byte(0x22)
+            if (b(0) < 128 && x - b(0) !in 0 until b(4)) continue
+            if (b(1) < 128 && y - b(1) !in 0 until b(5)) continue
+            if (b(2) < 128 && z != b(2)) continue
+            return Ed4Archive.word(script,p+6)
+        }
+        return 0
+    }
     fun start(offset: Int, actorIndex: Int = 0): Event {
         require(offset in script.indices)
-        before = memory.copyOf(); pc = offset; actor = 0x20 + actorIndex * 16
+        before = memory.copyOf(); mapBefore = map.copyOf(); pc = offset; actor = 0x20 + actorIndex * 16
         returns.clear(); active = true; budget = 0; speaker = ""
         return resume()
     }
+    fun mapCheckpoint(): ByteArray = (mapBefore ?: map).copyOf()
     fun transitionState(): ByteArray = memory.copyOf()
     fun checkpoint(): ByteArray = (before ?: memory).copyOf()
-    fun cancel() { before?.copyInto(memory); before = null; active = false; returns.clear() }
+    fun cancel() { before?.copyInto(memory); mapBefore?.copyInto(map); before = null; mapBefore = null; active = false; returns.clear() }
     fun resume(): Event {
         if (!active) return Event.Done
         val offset = pc
+        var instructionOffset = pc
         return try {
             while (budget++ < 10000) {
+                instructionOffset = pc
                 val instruction = next()
                 when (instruction) {
-                    0 -> if (returns.isEmpty()) { active = false; before = null; return Event.Done } else pc = returns.removeLast()
+                    0 -> if (returns.isEmpty()) { active = false; before = null; mapBefore = null; return Event.Done } else { val target = returns.removeLast(); pc = target.pc; actor = target.actor }
                     1 -> { ax = expression(); val destination = nextWord(); if (ax == 0) pc = destination }
                     2 -> pc = nextWord()
                     3 -> { ax = expression(); val count = nextWord(); require(count <= 256); val cases = List(count) { nextWord() to nextWord() }; val default = nextWord(); pc = cases.firstOrNull { it.first == ax }?.second ?: default }
                     4 -> ax = expression()
                     5 -> ax = expression(listOf(actor + next()))
                     6 -> ax = expression(listOf(value()))
-                    7, 0x0e -> { val target = nextWord(); if (target != 0) { returns.addLast(pc); pc = target } }
+                    7, 0x0e -> { val target = nextWord(); if (target != 0) { returns.addLast(Return(pc, actor)); pc = target } }
                     8 -> { value() /* sound effect requested by original script */ }
-                    9, 0x11, 0x18, 0x19, 0x2a, 0x2d, 0x31 -> Unit // render/wait/window refresh: no state operands
+                    9, 0x11, 0x18, 0x19, 0x29, 0x2a, 0x2d, 0x31 -> Unit // render/wait/window refresh: no state operands
                     0x0a -> { val index = value(); ax = if (flag(index)) { setFlag(index, false); 0xffff } else 0 }
                     0x0b -> { val index = value(); ax = if (!flag(index)) { setFlag(index, true); 0xffff } else 0 }
                     0x0f -> return speech()
-                    0x10 -> { active = false; before = null; return Event.Done } // original returns control to the field loop
+                    0x10 -> { active = false; before = null; mapBefore = null; return Event.Done } // original returns control to the field loop
                     0x12 -> {
                         var p = Ed4Archive.word(script, 34)
                         repeat(next() - 1) { while (p < script.size && script[p].toInt() != 0) p++; p++ }
                         val end = (p until script.size).firstOrNull { script[it].toInt() == 0 } ?: error("이름 데이터 오류")
                         speaker = String(script, p, end - p, Charset.forName("MS949"))
+                    }
+                    0x0d -> {
+                        val target = trigger(0)
+                        if (target != 0) { returns.addLast(Return(pc,actor)); actor = 0x20; pc = target }
                     }
                     0x13 -> { val id = next(); speaker = characterName(id) }
                     0x14 -> { val fade = next(); val resource = nextWord(); val stage = nextWord(); active = false; return Event.MapChange(resource, stage and 255, fade) }
@@ -137,11 +170,25 @@ class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterN
                     0x1e -> { val direction = next(); putByte(actor + 3, direction); if (direction < 8) putByte(actor + 4, (byte(actor + 4) and 0xf9) or (direction and 6)) }
                     0x1f -> { val target = 0x20 + next() * 16; putByte(target + 12, byte(target + 12) and next()) }
                     0x20 -> putByte(actor + 12, byte(actor + 12) and next())
+                    0x21 -> { val target = nextWord(); if (target != 0) { returns.addLast(Return(pc, actor)); actor = 0x20; pc = target } }
                     0x22 -> { val target = 0x20 + next() * 16; putByte(target + 12, next()) }
                     0x23 -> putWord(0, nextWord()) // original scroll camera
                     0x24 -> { nextWord(); nextWord() /* animated map cell descriptor */ }
-                    0x27, 0x2b -> { next() /* delay ticks / fade steps */ }
-                    0x28 -> ax = if ((byte(0x1b) and 1) != 0) 0xffff else 0
+                    0x25, 0x49 -> {
+                        val source = nextWord(); val dimensions = nextWord(); val destination = nextWord()
+                        val width = dimensions and 255; val height = dimensions ushr 8
+                        require(width in 1..128 && height in 1..80 && map.size == 20480) { "맵 변경 데이터 범위 오류" }
+                        fun copyCell(x: Int, y: Int) {
+                            val from = source + y * 256 + x * 2; val to = destination + y * 256 + x * 2
+                            require(from >= 0 && from + 1 < map.size && to >= 0 && to + 1 < map.size)
+                            map[to] = map[from]; map[to + 1] = map[from + 1]
+                        }
+                        if (instruction == 0x49) for (y in 0 until height) for (x in 0 until width) copyCell(x,y)
+                        else for (x in 0 until width) for (y in 0 until height) copyCell(x,y)
+                    }
+                    0x27 -> { next() /* delay ticks / fade steps */ }
+                    0x28 -> { active = false; before = null; mapBefore = null; return Event.Done }
+                    0x2b -> ax = if ((byte(0x1b) and 1) != 0) 0xffff else 0
                     0x2c -> putByte(0x1be6, next())
                     0x2e -> putByte(0x20 + next() * 16 + 4, next())
                     0x2f -> { val target = 0x20 + next() * 16; putWord(target, nextWord()); putByte(target + 2, next()) }
@@ -153,7 +200,7 @@ class Ed4Scenario(val script: ByteArray, seed: ByteArray, private val characterN
             }
             error("이벤트 실행 한도")
         } catch (error: Exception) {
-            val failed = pc - 1; cancel(); Event.Halt(failed, error.message ?: "이벤트 해석 오류 ($offset)")
+            val failed = instructionOffset; cancel(); Event.Halt(failed, error.message ?: "이벤트 해석 오류 ($offset)")
         }
     }
     private fun characterName(id: Int): String = characterNames.getOrNull(id) ?: error("등장인물 이름 범위 초과: $id")

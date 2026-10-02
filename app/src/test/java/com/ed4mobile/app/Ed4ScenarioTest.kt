@@ -40,4 +40,33 @@ class Ed4ScenarioTest {
         assertEquals(Ed4Scenario.Event.Done,vm.start(80))
         assertEquals(1,vm.byte(0x4b0))
     }
+    @Test fun mapChangesRollbackAlongWithFlags() {
+        val grid=ByteArray(20480); grid[0]=42; grid[2]=43
+        val code=byteArrayOf(0x49,0,0,2,1,0,1,0x0f,65,0,0x5c)
+        val vm=Ed4Scenario(ByteArray(80)+code,ByteArray(8192),listOf("어빈"),grid)
+        assertTrue(vm.start(80) is Ed4Scenario.Event.Speech)
+        assertEquals(42,vm.map[256].toInt()); assertEquals(43,vm.map[258].toInt())
+        assertEquals(0,vm.mapCheckpoint()[256].toInt())
+        assertTrue(vm.resume() is Ed4Scenario.Event.Halt)
+        assertEquals(0,vm.map[256].toInt())
+    }
+    @Test fun rejectedMapTransitionRetainsRollbackSnapshot() {
+        val vm=fixture(byteArrayOf(0x0b,0xc4.toByte(),0,0x14,1,0x2c,0x90.toByte(),0,0))
+        assertTrue(vm.start(80) is Ed4Scenario.Event.MapChange)
+        assertEquals(1,vm.byte(0x4b0)); assertEquals(0,vm.checkpoint()[0x4b0].toInt())
+        vm.cancel(); assertEquals(0,vm.byte(0x4b0))
+    }
+    @Test fun regionTriggerChecksBoundsHeightAndInputMask() {
+        val b=ByteArray(100); b[28]=40; b[30]=1
+        byteArrayOf(3,4,21,0x21,2,1,80,0).copyInto(b,40)
+        val vm=Ed4Scenario(b,ByteArray(8192),emptyList())
+        vm.putByte(0x20,3);vm.putByte(0x21,4);vm.putByte(0x22,21);vm.putByte(0x23,2)
+        assertEquals(80,vm.trigger(1)); assertEquals(80,vm.trigger(0x20)); assertEquals(0,vm.trigger(4))
+        vm.putByte(0x22,20);assertEquals(0,vm.trigger(1))
+    }
+    @Test fun queryOpcodeHasNoOperandAndWorksInsideExpressions() {
+        val vm=fixture(byteArrayOf(4,0x7b,0x2b,0x60,0x0b,0xc4.toByte(),0,0))
+        vm.putByte(0x1b,1)
+        assertEquals(Ed4Scenario.Event.Done,vm.start(80)); assertEquals(1,vm.byte(0x4b0))
+    }
 }
