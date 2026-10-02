@@ -89,9 +89,9 @@ class MainActivity : AppCompatActivity() {
         private var tx=px; private var ty=py
         private var lastFrame=0L
         private var menu=false
-        private var dialogue=true
+        private var dialogue=true\n        private var introStage=0\n        private var samsung:Bitmap?=null\n        private var mantra:Bitmap?=null
 
-        fun loadGame(file:File,text:String) { world=decodePcx16(file.readBytes()); info=text; invalidate() }
+        fun loadGame(file:File,text:String) { world=decodePcx16(file.readBytes()); info=text; samsung=File(filesDir,"ed4native/SAMSUNG.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; mantra=File(filesDir,"ed4native/MANTRA.DAT").takeIf{it.exists()}?.let{decodeRawPlanar16(it.readBytes())}; introStage=if(samsung!=null) 0 else 2; invalidate() }
         fun toggleMenu(){ menu=!menu; invalidate() }
 
         override fun onDraw(c:Canvas) {
@@ -104,6 +104,13 @@ class MainActivity : AppCompatActivity() {
             drawHud(c)
             if(dialogue) drawDialogue(c)
             if(menu) drawMenu(c)
+        }
+
+        private fun drawIntro(c:Canvas,b:Bitmap?){
+            c.drawColor(Color.BLACK)
+            if(b!=null){ val scale=minOf(width.toFloat()/b.width,height.toFloat()/b.height); val dw=b.width*scale; val dh=b.height*scale; c.drawBitmap(b,null,RectF((width-dw)/2,(height-dh)/2,(width+dw)/2,(height+dh)/2),p) }
+            p.textAlign=Paint.Align.CENTER; p.color=Color.WHITE; p.textSize=16f
+            c.drawText("터치하여 계속",width/2f,height-28f,p); p.textAlign=Paint.Align.LEFT
         }
 
         private fun drawWorld(c:Canvas,b:Bitmap){
