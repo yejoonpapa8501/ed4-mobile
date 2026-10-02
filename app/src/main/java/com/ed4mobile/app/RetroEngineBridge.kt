@@ -65,10 +65,11 @@ class RetroEngineBridge(private val context: Context) {
 
                 zout.putNextEntry(ZipEntry("DOSBOX.BAT"))
                 zout.write(
-                    "@echo off\r\n" +
-                    "cd ed4\r\n" +
-                    "call NOSOUND.BAT\r\n"
-                        .toByteArray(Charsets.US_ASCII)
+                    (
+                        "@echo off\r\n" +
+                        "cd ed4\r\n" +
+                        "call NOSOUND.BAT\r\n"
+                    ).toByteArray(Charsets.US_ASCII)
                 )
                 zout.closeEntry()
             }
