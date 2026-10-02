@@ -1,0 +1,80 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <FrameLayout
+        android:id="@+id/gameContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="8dp"
+        android:background="#55000000"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:text="ED4 Mobile"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp" />
+
+    <Button
+        android:id="@+id/btnSelectGame"
+        android:layout_width="180dp"
+        android:layout_height="54dp"
+        android:layout_gravity="center"
+        android:background="@drawable/control_button_rect"
+        android:text="ed4.zip 선택"
+        android:textColor="#FFFFFF"
+        android:visibility="gone" />
+
+    <GridLayout
+        android:id="@+id/dpad"
+        android:layout_width="180dp"
+        android:layout_height="180dp"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="18dp"
+        android:columnCount="3"
+        android:rowCount="3">
+        <Space android:layout_width="60dp" android:layout_height="60dp" />
+        <Button android:id="@+id/btnUp" android:layout_width="60dp" android:layout_height="60dp" android:background="@drawable/control_button" android:text="▲" android:textColor="#FFFFFF" android:textSize="22sp" />
+        <Space android:layout_width="60dp" android:layout_height="60dp" />
+        <Button android:id="@+id/btnLeft" android:layout_width="60dp" android:layout_height="60dp" android:background="@drawable/control_button" android:text="◀" android:textColor="#FFFFFF" android:textSize="22sp" />
+        <Space android:layout_width="60dp" android:layout_height="60dp" />
+        <Button android:id="@+id/btnRight" android:layout_width="60dp" android:layout_height="60dp" android:background="@drawable/control_button" android:text="▶" android:textColor="#FFFFFF" android:textSize="22sp" />
+        <Space android:layout_width="60dp" android:layout_height="60dp" />
+        <Button android:id="@+id/btnDown" android:layout_width="60dp" android:layout_height="60dp" android:background="@drawable/control_button" android:text="▼" android:textColor="#FFFFFF" android:textSize="22sp" />
+        <Space android:layout_width="60dp" android:layout_height="60dp" />
+    </GridLayout>
+
+    <LinearLayout
+        android:layout_width="284dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="18dp"
+        android:gravity="center"
+        android:orientation="vertical">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btnMenu" android:layout_width="64dp" android:layout_height="52dp" android:layout_margin="2dp" android:background="@drawable/control_button_rect" android:text="메뉴" android:textColor="#FFFFFF" />
+            <Button android:id="@+id/btnQuickSave" android:layout_width="64dp" android:layout_height="52dp" android:layout_margin="2dp" android:background="@drawable/control_button_rect" android:text="저장" android:textColor="#FFFFFF" />
+            <Button android:id="@+id/btnQuickLoad" android:layout_width="64dp" android:layout_height="52dp" android:layout_margin="2dp" android:background="@drawable/control_button_rect" android:text="불러오기" android:textColor="#FFFFFF" android:textSize="11sp" />
+            <Button android:id="@+id/btnSpeed" android:layout_width="64dp" android:layout_height="52dp" android:layout_margin="2dp" android:background="@drawable/control_button_rect" android:text="1×" android:textColor="#FFFFFF" />
+        </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal">
+            <Button android:id="@+id/btnCancel" android:layout_width="96dp" android:layout_height="72dp" android:layout_margin="4dp" android:background="@drawable/control_button" android:text="취소" android:textColor="#FFFFFF" android:textSize="16sp" />
+            <Button android:id="@+id/btnConfirm" android:layout_width="96dp" android:layout_height="72dp" android:layout_margin="4dp" android:background="@drawable/control_button" android:text="확인" android:textColor="#FFFFFF" android:textSize="16sp" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
