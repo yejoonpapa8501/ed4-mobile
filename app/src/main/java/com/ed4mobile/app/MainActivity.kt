@@ -183,6 +183,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun decodeRawPlanar16(b:ByteArray):Bitmap? {
+        if(b.size<52) return null
+        val bpl=u16(b,0); val h=u16(b,2)
+        if(bpl !in 1..160 || h !in 1..600 || 52+bpl*h*4>b.size) return null
+        val w=bpl*8; val pal=IntArray(16)
+        for(i in 0 until 16){ val o=4+i*3; pal[i]=Color.rgb((b[o].toInt() and 255)*4.coerceAtMost(255),(b[o+1].toInt() and 255)*4.coerceAtMost(255),(b[o+2].toInt() and 255)*4.coerceAtMost(255)) }
+        val dataOff=52; val planeSize=bpl*h; val pixels=IntArray(w*h)
+        for(y in 0 until h) for(x in 0 until w){ var idx=0; for(pl in 0 until 4){ val v=b[dataOff+pl*planeSize+y*bpl+x/8].toInt() and 255; if((v and (0x80 shr (x and 7)))!=0) idx=idx or (1 shl pl) }; pixels[y*w+x]=pal[idx] }
+        return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888)
+    }
+
     private fun decodePcx16(b:ByteArray):Bitmap{
         require(b.size>128 && (b[0].toInt() and 255)==10)
         fun u(o:Int)=(b[o].toInt() and 255) or ((b[o+1].toInt() and 255) shl 8)
