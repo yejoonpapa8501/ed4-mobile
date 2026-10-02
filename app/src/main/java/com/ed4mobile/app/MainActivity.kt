@@ -62,12 +62,24 @@ class MainActivity : AppCompatActivity() {
                 if(base.equals("ED4.EXE",true)) exe=true
                 if(base.equals("BACK.DAT",true)) {
                     File(dir,"BACK.DAT").outputStream().use { zin.copyTo(it) }; back=true
+                } else if(base.equals("MANTRA.DAT",true) || base.equals("SAMSUNG.DAT",true)) {
+                    File(dir,base.uppercase()).outputStream().use { zin.copyTo(it) }
                 } else if(isData) {
-                    val out=File(dir,base.uppercase())
-                    out.outputStream().use { zin.copyTo(it) }
-                    if(out.length()>=16) {
-                        val h=ByteArray(16); out.inputStream().use { it.read(h) }
-                        if(String(h,0,8,Charsets.US_ASCII)=="AFLB DAT") aflbEntries += u16(h,10)
+                    val out=File(dir,base.uppercase()); out.outputStream().use { zin.copyTo(it) }
+                    val bytes=out.readBytes()
+                    if(bytes.size>=20 && String(bytes,0,8,Charsets.US_ASCII)=="AFLB DAT") {
+                        val count=u16(bytes,10); aflbEntries += count
+                        val resDir=File(dir,"resources/"+base.substringBeforeLast(".")); resDir.mkdirs()
+                        for(i in 0 until count) {
+                            val st=16+i*2; val et=16+(i+1)*2
+                            if(et+1>=bytes.size) break
+                            val start=u16(bytes,st)*32
+                            val blockEnd=(u16(bytes,et)*32).coerceAtMost(bytes.size)
+                            if(start>=blockEnd || start>=bytes.size) continue
+                            var end=blockEnd
+                            while(end>start && bytes[end-1].toInt()==-1) end--
+                            if(end>start) { File(resDir,"%03d.bin".format(i)).writeBytes(bytes.copyOfRange(start,end)); extracted++ }
+                        }
                     }
                 }
                 zin.closeEntry()
