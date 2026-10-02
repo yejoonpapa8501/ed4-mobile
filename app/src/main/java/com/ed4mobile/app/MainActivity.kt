@@ -1,129 +1,190 @@
 package com.ed4mobile.app
 
+import android.content.Intent
+import android.graphics.*
 import android.net.Uri
 import android.os.Bundle
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.widget.Button
-import android.widget.FrameLayout
-import android.widget.TextView
+import android.view.*
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
+import java.io.*
+import java.util.zip.ZipInputStream
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var bridge: RetroEngineBridge
-    private lateinit var statusText: TextView
-    private lateinit var gameContainer: FrameLayout
-    private var gameStarted = false
+    private lateinit var gameView: NativeEd4View
 
     private val chooseGame = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@registerForActivityResult
-        runCatching {
-            contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
         try {
-            val game = bridge.importGame(uri)
-            startGame(game)
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: Throwable) {}
+        try {
+            val info = importOriginalData(uri)
+            gameView.loadWorldMap(File(filesDir, "ed4native/BACK.DAT"), info)
+            Toast.makeText(this, "원본 데이터 분석 완료 · 네이티브 엔진으로 표시 중", Toast.LENGTH_LONG).show()
         } catch (t: Throwable) {
-            statusText.text = "게임 파일 불러오기 실패"
-            Toast.makeText(this, t.message ?: "ed4.zip을 확인해 주세요.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "불러오기 실패: " + (t.message ?: "알 수 없는 오류"), Toast.LENGTH_LONG).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-        hideSystemUi()
-
-        statusText = findViewById(R.id.statusText)
-        gameContainer = findViewById(R.id.gameContainer)
-        bridge = RetroEngineBridge(this)
-
-        bindHoldButton(R.id.btnUp, DosKey.UP)
-        bindHoldButton(R.id.btnDown, DosKey.DOWN)
-        bindHoldButton(R.id.btnLeft, DosKey.LEFT)
-        bindHoldButton(R.id.btnRight, DosKey.RIGHT)
-        bindHoldButton(R.id.btnConfirm, DosKey.CONFIRM)
-        bindHoldButton(R.id.btnCancel, DosKey.CANCEL)
-        bindHoldButton(R.id.btnMenu, DosKey.MENU)
-
-        findViewById<Button>(R.id.btnSpeed).setOnClickListener { view ->
-            if (!gameStarted) return@setOnClickListener
-            val speed = bridge.cycleSpeed()
-            (view as Button).text = "${speed}×"
-            statusText.text = "ED4 Mobile · CUT3 · ${speed}×"
-        }
-        findViewById<Button>(R.id.btnQuickSave).setOnClickListener {
-            val ok = bridge.quickSave()
-            toast(if (ok) "빠른 저장 완료" else "아직 게임이 실행되지 않았습니다.")
-        }
-        findViewById<Button>(R.id.btnQuickLoad).setOnClickListener {
-            val ok = bridge.quickLoad()
-            toast(if (ok) "빠른 불러오기 완료" else "저장 상태가 없습니다.")
-        }
-        findViewById<Button>(R.id.btnSelectGame).setOnClickListener {
-            chooseGame.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
-        }
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        )
+        gameView = NativeEd4View()
+        setContentView(gameView)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (gameStarted) {
-                    bridge.keyDown(DosKey.CANCEL)
-                    bridge.keyUp(DosKey.CANCEL)
-                }
-            }
+            override fun handleOnBackPressed() { gameView.showHelp = !gameView.showHelp; gameView.invalidate() }
         })
 
-        if (bridge.hasImportedGame()) {
-            startGame(bridge.importedGameFile())
-        } else {
-            statusText.text = "처음 실행: 아래 ‘ed4.zip 선택’ 버튼을 눌러 주세요"
-            findViewById<Button>(R.id.btnSelectGame).visibility = View.VISIBLE
-        }
+        val back = File(filesDir, "ed4native/BACK.DAT")
+        val meta = File(filesDir, "ed4native/meta.txt")
+        if (back.exists()) gameView.loadWorldMap(back, meta.takeIf { it.exists() }?.readText() ?: "이전 가져오기 데이터")
+        else chooseGame.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
     }
 
-    private fun startGame(gameFile: java.io.File) {
-        if (gameStarted) return
-        try {
-            val retroView = bridge.createView(gameContainer, gameFile)
-            lifecycle.addObserver(retroView)
-            gameStarted = true
-            findViewById<Button>(R.id.btnSelectGame).visibility = View.GONE
-            statusText.text = "ED4 Mobile · DOSBox-Pure 시작 중"
-            lifecycleScope.launch {
-                retroView.getGLRetroEvents().collect {
-                    statusText.text = "ED4 Mobile · CUT3 · ${bridge.speedMultiplier}×"
+    private fun importOriginalData(uri: Uri): String {
+        val dir = File(filesDir, "ed4native").apply { mkdirs() }
+        var entries = 0
+        var dataFiles = 0
+        var effects = 0
+        var foundDriver = false
+        var foundEd4 = false
+        var foundBack = false
+        val input = contentResolver.openInputStream(uri) ?: error("ZIP을 읽을 수 없습니다.")
+        ZipInputStream(BufferedInputStream(input)).use { zin ->
+            while (true) {
+                val e = zin.nextEntry ?: break
+                val n = e.name.replace('\\', '/')
+                entries++
+                if (n.substringAfterLast('/').matches(Regex("DATA(_[A-J]|1[0-3])\\.DAT", RegexOption.IGNORE_CASE))) dataFiles++
+                if (n.endsWith(".EFC", true)) effects++
+                if (n.endsWith("/DRIVER.EXE", true) || n.equals("DRIVER.EXE", true)) foundDriver = true
+                if (n.endsWith("/ED4.EXE", true) || n.equals("ED4.EXE", true)) foundEd4 = true
+                if (n.endsWith("/BACK.DAT", true) || n.equals("BACK.DAT", true)) {
+                    File(dir, "BACK.DAT").outputStream().use { out -> zin.copyTo(out) }
+                    foundBack = true
                 }
+                zin.closeEntry()
             }
-        } catch (t: Throwable) {
-            statusText.text = "실행 오류: ${t.message}"
-            findViewById<Button>(R.id.btnSelectGame).visibility = View.VISIBLE
+        }
+        require(foundDriver && foundEd4 && foundBack) { "영웅전설4 원본 구조를 확인하지 못했습니다." }
+        val info = "ZIP 항목 $entries · DATA $dataFiles · EFC $effects · BACK.DAT 네이티브 PCX 디코딩"
+        File(dir, "meta.txt").writeText(info)
+        return info
+    }
+
+    inner class NativeEd4View : View(this) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private var map: Bitmap? = null
+        private var info = "원본 ed4.zip을 선택해 주세요"
+        var showHelp = true
+        private var px = 0.5f
+        private var py = 0.55f
+        private val buttons = mutableMapOf<String, RectF>()
+
+        fun loadWorldMap(file: File, text: String) {
+            map = decodePcx16(file.readBytes())
+            info = text
+            showHelp = false
+            invalidate()
+        }
+
+        override fun onDraw(c: Canvas) {
+            super.onDraw(c)
+            c.drawColor(Color.BLACK)
+            val bmp = map
+            if (bmp != null) {
+                val scale = minOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
+                val dw = bmp.width * scale
+                val dh = bmp.height * scale
+                val dst = RectF((width-dw)/2, (height-dh)/2, (width+dw)/2, (height+dh)/2)
+                paint.isFilterBitmap = true
+                c.drawBitmap(bmp, null, dst, paint)
+                paint.color = Color.argb(210, 20, 20, 20)
+                c.drawRect(0f, 0f, width.toFloat(), 70f, paint)
+                paint.color = Color.WHITE; paint.textSize = 28f
+                c.drawText("ED4 Mobile · Native Prototype 1", 28f, 43f, paint)
+                paint.textSize = 18f
+                c.drawText(info, 28f, 66f, paint)
+
+                paint.color = Color.YELLOW
+                c.drawCircle(px * width, py * height, 10f, paint)
+                drawControls(c)
+            } else {
+                paint.color = Color.WHITE; paint.textAlign = Paint.Align.CENTER; paint.textSize = 34f
+                c.drawText("영웅전설4 네이티브 엔진", width/2f, height/2f-40, paint)
+                paint.textSize = 22f
+                c.drawText("화면을 눌러 ed4.zip 선택", width/2f, height/2f+10, paint)
+            }
+            if (showHelp && bmp != null) {
+                paint.color = Color.argb(225,0,0,0); c.drawRect(width*.18f,height*.2f,width*.82f,height*.8f,paint)
+                paint.color = Color.WHITE; paint.textAlign = Paint.Align.CENTER; paint.textSize = 28f
+                c.drawText("DOSBox를 제거한 첫 네이티브 빌드", width/2f,height*.36f,paint)
+                paint.textSize = 20f
+                c.drawText("BACK.DAT를 Android에서 직접 디코딩했습니다.",width/2f,height*.47f,paint)
+                c.drawText("다음 단계: 맵/캐릭터/대사 데이터 해석",width/2f,height*.55f,paint)
+                c.drawText("뒤로가기: 이 안내 닫기",width/2f,height*.67f,paint)
+            }
+            paint.textAlign = Paint.Align.LEFT
+        }
+
+        private fun drawControls(c: Canvas) {
+            buttons.clear()
+            val s=64f; val x=85f; val y=height-100f
+            fun b(name:String,cx:Float,cy:Float,label:String){
+                val r=RectF(cx-s/2,cy-s/2,cx+s/2,cy+s/2); buttons[name]=r
+                paint.color=Color.argb(145,0,0,0); c.drawRoundRect(r,18f,18f,paint)
+                paint.color=Color.WHITE; paint.textAlign=Paint.Align.CENTER; paint.textSize=30f
+                c.drawText(label,cx,cy+10f,paint)
+            }
+            b("L",x-s,y,"◀"); b("R",x+s,y,"▶"); b("U",x,y-s,"▲"); b("D",x,y+s,"▼")
+            paint.textAlign=Paint.Align.LEFT
+        }
+
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (e.action != MotionEvent.ACTION_DOWN) return true
+            if (map == null) { chooseGame.launch(arrayOf("application/zip","*/*")); return true }
+            for ((k,r) in buttons) if (r.contains(e.x,e.y)) {
+                when(k){ "L"->px-=.015f; "R"->px+=.015f; "U"->py-=.02f; "D"->py+=.02f }
+                px=px.coerceIn(.05f,.95f); py=py.coerceIn(.12f,.92f); invalidate(); return true
+            }
+            showHelp=false; invalidate(); return true
         }
     }
 
-    private fun bindHoldButton(id: Int, key: DosKey) {
-        findViewById<View>(id).setOnTouchListener { _, event ->
-            if (!gameStarted) return@setOnTouchListener true
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { bridge.keyDown(key); true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { bridge.keyUp(key); true }
-                else -> true
+    private fun decodePcx16(b: ByteArray): Bitmap {
+        require(b.size > 128 && (b[0].toInt() and 255) == 10) { "BACK.DAT가 PCX 형식이 아닙니다." }
+        fun u16(o:Int)=(b[o].toInt() and 255) or ((b[o+1].toInt() and 255) shl 8)
+        val xmin=u16(4); val ymin=u16(6); val xmax=u16(8); val ymax=u16(10)
+        val w=xmax-xmin+1; val h=ymax-ymin+1
+        val planes=b[65].toInt() and 255; val bytesPerLine=u16(66)
+        require(planes in 1..4) { "지원하지 않는 PCX plane 수: $planes" }
+        val pal=IntArray(16)
+        for(i in 0 until 16){ val o=16+i*3; pal[i]=Color.rgb(b[o].toInt()and255,b[o+1].toInt()and255,b[o+2].toInt()and255) }
+        val scan=ByteArray(bytesPerLine*planes); val pixels=IntArray(w*h); var p=128
+        for(y in 0 until h){
+            var q=0
+            while(q<scan.size && p<b.size){
+                var v=b[p++].toInt() and 255; var count=1
+                if((v and 0xC0)==0xC0){ count=v and 0x3F; v=b[p++].toInt() and 255 }
+                repeat(count.coerceAtMost(scan.size-q)){ scan[q++]=v.toByte() }
+            }
+            for(x in 0 until w){
+                var idx=0
+                for(pl in 0 until planes){
+                    val byt=scan[pl*bytesPerLine+x/8].toInt() and 255
+                    if((byt and (0x80 shr (x and 7)))!=0) idx=idx or (1 shl pl)
+                }
+                pixels[y*w+x]=pal[idx]
             }
         }
-    }
-
-    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-
-    private fun hideSystemUi() {
-        window.insetsController?.apply {
-            hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
-            systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
+        return Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888)
     }
 }
