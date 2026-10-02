@@ -83,7 +83,7 @@ class MainActivity : AppCompatActivity() {
     inner class NativeEd4View : View(this) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private var map: Bitmap? = null
-        private var info = "원본 ed4.zip을 선택해 주세요"
+        private var info = "원본 ed4.zip을 선택해 주세요"\n        private var gameTitle = "영웅전설 IV · 주홍물방울"
         var showHelp = true
         private var px = 0.5f
         private var py = 0.55f; private var targetX = px; private var targetY = py; private var lastFrame = 0L
@@ -110,13 +110,13 @@ class MainActivity : AppCompatActivity() {
                 paint.color = Color.argb(210, 20, 20, 20)
                 c.drawRect(0f, 0f, width.toFloat(), 70f, paint)
                 paint.color = Color.WHITE; paint.textSize = 28f
-                c.drawText("ED4 Mobile · Native Prototype 1", 28f, 43f, paint)
+                c.drawText(gameTitle, 28f, 43f, paint)
                 paint.textSize = 18f
                 c.drawText(info, 28f, 66f, paint)
 
                 paint.color = Color.YELLOW
                 c.drawCircle(px * width, py * height, 10f, paint)
-                drawControls(c)
+                drawControls(c)\n                drawGameHud(c)
             } else {
                 paint.color = Color.WHITE; paint.textAlign = Paint.Align.CENTER; paint.textSize = 34f
                 c.drawText("영웅전설4 네이티브 엔진", width/2f, height/2f-40, paint)
@@ -133,6 +133,18 @@ class MainActivity : AppCompatActivity() {
                 c.drawText("뒤로가기: 이 안내 닫기",width/2f,height*.67f,paint)
             }
             paint.textAlign = Paint.Align.LEFT
+        }
+
+        private fun drawGameHud(c: Canvas) {
+            val panel = RectF(width-270f, 88f, width-18f, 205f)
+            paint.color = Color.argb(205, 8, 18, 28); c.drawRoundRect(panel, 12f, 12f, paint)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f; paint.color = Color.rgb(205,180,105); c.drawRoundRect(panel,12f,12f,paint); paint.style=Paint.Style.FILL
+            paint.color = Color.WHITE; paint.textSize=19f
+            c.drawText("어빈", width-248f, 118f, paint)
+            c.drawText("HP  120 / 120", width-248f, 148f, paint)
+            c.drawText("MP   42 / 42", width-248f, 176f, paint)
+            paint.color=Color.rgb(220,195,120); paint.textSize=15f
+            c.drawText("Native Engine · ED4 DATA", width-248f, 198f, paint)
         }
 
         private fun animateMarker() {
