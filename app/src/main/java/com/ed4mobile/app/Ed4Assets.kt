@@ -1,0 +1,111 @@
+package com.ed4mobile.app
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import java.io.File
+import kotlin.math.roundToInt
+
+/** Verified DOS planar tiles and 14-layer map composites, without bundled game bytes. */
+class Ed4Assets(private val directory: File) {
+    private val area = Ed4Archive(File(directory, "DATA_A.DAT"))
+    private val actors = Ed4Archive(File(directory, "DATA12.DAT"))
+    private val engine = Ed4Archive(File(directory, "DATA11.DAT")).resource(0)
+    val sceneIds = listOf(0, 4, 10, 14, 15, 21, 26, 30, 34, 39, 43, 47, 51, 55)
+    data class Scene(val image: Bitmap, val frames: List<Bitmap>, val id: Int, val unsupportedCells: Int)
+
+    fun scene(index: Int): Scene {
+        val id = sceneIds[index.coerceIn(sceneIds.indices)]
+        val metadata = area.resource(id)
+        fun ref(offset: Int) = Ed4Archive.word(metadata, offset) and 4095
+        val grid = area.resource(ref(0))
+        val graphics = area.resource(ref(4))
+        val definitions = area.resource(ref(6))
+        require(grid.size == 20480 && graphics.size >= 32768 && definitions.size == 8192)
+        val palette = palette(graphics)
+        val source = tiles(graphics.copyOfRange(0, 32768))
+        val combined = List(512) { i ->
+            val pixels = IntArray(256)
+            for (layer in 0 until 14) {
+                val tile = definitions[i * 16 + layer].toInt() and 255
+                if (tile != 0) for (p in 0 until 256) if (source[tile][p] != 15) pixels[p] = source[tile][p]
+            }
+            pixels
+        }
+        fun bitmap(tile: IntArray) = Bitmap.createBitmap(IntArray(256) { palette[tile[it]] }, 16, 16, Bitmap.Config.ARGB_8888)
+        val tileImages = (source + combined).map { bitmap(it) }
+        val output = Bitmap.createBitmap(2048, 1280, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint().apply { isFilterBitmap = false }
+        var missing = 0
+        var maxX = 32; var maxY = 32
+        for (i in 0 until grid.size / 2) {
+            val word = Ed4Archive.word(grid, i * 2)
+            val tile = word ushr 6
+            val pixels = when {
+                tile >= 512 -> combined[tile - 512]
+                tile < 256 -> source[tile]
+                else -> { missing++; continue }
+            }
+            if (pixels.any { it != 0 && it != 15 }) { maxX = maxOf(maxX, i % 128 * 16 + 16); maxY = maxOf(maxY, i / 128 * 16 + 16) }
+            val image = tileImages[if (tile >= 512) source.size + tile - 512 else tile]
+            canvas.drawBitmap(image, (i % 128 * 16).toFloat(), (i / 128 * 16).toFloat(), paint)
+        }
+        val cropped = Bitmap.createBitmap(output, 0, 0, maxX, maxY)
+        if (cropped !== output) output.recycle()
+        tileImages.forEach { it.recycle() }
+        return Scene(cropped, heroFrames(palette), id, missing)
+    }
+
+    private fun palette(graphics: ByteArray): IntArray {
+        val base = Ed4Archive.word(engine, 0xffa4) * 16
+        require(base + 0x1ef6 + 48 <= engine.size)
+        val p = engine.copyOfRange(base + 0x1ef6, base + 0x1ef6 + 48)
+        require(p.all { (it.toInt() and 255) <= 15 })
+        if (graphics.size >= 32774) graphics.copyInto(p, 36, 32768, 32774)
+        // Original VGA writer accepts B,R,G triples and expands 4-bit values to a 6-bit DAC.
+        fun value(i: Int): Int { val n = p[i].toInt() and 15; return if (n == 0) 0 else ((n * 4 + 3) * 255f / 63).roundToInt() }
+        return IntArray(16) { i -> Color.rgb(value(i * 3 + 1), value(i * 3 + 2), value(i * 3)) }
+    }
+    private fun tiles(b: ByteArray): List<IntArray> = List(b.size / 128) { n ->
+        IntArray(256) { i ->
+            val x = i % 16; val y = i / 16; var color = 0
+            for (p in 0 until 4) color = color or (((b[n * 128 + p * 32 + y * 2 + x / 8].toInt() ushr (7 - x % 8)) and 1) shl p)
+            color
+        }
+    }
+    fun openingImages(): List<Bitmap> = listOf("SAMSUNG.DAT", "MANTRA.DAT").mapNotNull { name ->
+        val file = File(directory, name)
+        if (!file.exists()) null else runCatching {
+            val b = file.readBytes()
+            val bpl = Ed4Archive.word(b, 0); val height = Ed4Archive.word(b, 2)
+            require(bpl in 1..160 && height in 1..600 && 52 + bpl * height * 4 <= b.size)
+            val width = bpl * 8; val planeSize = bpl * height
+            val palette = IntArray(16) { i -> Color.rgb(b[4+i*3].toInt() and 255, b[5+i*3].toInt() and 255, b[6+i*3].toInt() and 255) }
+            val pixels = IntArray(width * height) { i ->
+                val x = i % width; val y = i / width; var index = 0
+                for (plane in 0 until 4) index = index or (((b[52 + plane * planeSize + y * bpl + x / 8].toInt() ushr (7-x%8)) and 1) shl plane)
+                palette[index]
+            }
+            Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        }.getOrNull()
+    }
+
+    private fun heroFrames(palette: IntArray): List<Bitmap> {
+        val source = tiles(actors.resource(16))
+        require(source.size >= 48)
+        // Eight frames: left pair, back pair, right pair, front pair.
+        return List(8) { frame ->
+            val colors = IntArray(32 * 48)
+            for (row in 0 until 3) for (col in 0 until 2) {
+                val tile = source[row * 16 + frame * 2 + col]
+                for (y in 0 until 16) for (x in 0 until 16) {
+                    val v = tile[y * 16 + x]
+                    colors[(row * 16 + y) * 32 + col * 16 + x] = if (v == 15) Color.TRANSPARENT else palette[v]
+                }
+            }
+            Bitmap.createBitmap(colors, 32, 48, Bitmap.Config.ARGB_8888)
+        }
+    }
+}

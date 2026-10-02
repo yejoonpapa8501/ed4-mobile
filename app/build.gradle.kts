@@ -12,8 +12,8 @@ android {
         minSdk = 23
         targetSdk = 35
         ndk { abiFilters += listOf("arm64-v8a") }
-        versionCode = 10
-        versionName = "1.0-native-prototype"
+        versionCode = 35
+        versionName = "1.3-integrated-field"
     }
 
     buildTypes {
@@ -39,5 +39,4 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("com.github.Swordfish90:LibretroDroid:0.13.2")
 }
