@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         private var info = "원본 ed4.zip을 선택해 주세요"
         var showHelp = true
         private var px = 0.5f
-        private var py = 0.55f\n        private var targetX = px\n        private var targetY = py\n        private var lastFrame = 0L
+        private var py = 0.55f; private var targetX = px; private var targetY = py; private var lastFrame = 0L
         private val buttons = mutableMapOf<String, RectF>()
 
         fun loadWorldMap(file: File, text: String) {
@@ -98,7 +98,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDraw(c: Canvas) {
             super.onDraw(c)
-            c.drawColor(Color.BLACK)\n            animateMarker()
+            c.drawColor(Color.BLACK);     animateMarker()
             val bmp = map
             if (bmp != null) {
                 val scale = minOf(width.toFloat() / bmp.width, height.toFloat() / bmp.height)
