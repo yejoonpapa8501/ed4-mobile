@@ -1,0 +1,2 @@
+-keep class com.swordfish.libretrodroid.** { *; }
+-keepclassmembers class com.swordfish.libretrodroid.** { *; }
