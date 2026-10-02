@@ -35,17 +35,6 @@ jobs:
         with:
           gradle-version: '8.6'
 
-      - name: Download DOSBox-Pure ARM64 core
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p app/src/main/jniLibs/arm64-v8a /tmp/ed4core
-          curl -fL --retry 4 --retry-delay 3             -o /tmp/ed4core/core.zip             https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/dosbox_pure_libretro_android.so.zip
-          unzip -o /tmp/ed4core/core.zip -d /tmp/ed4core/unpacked
-          CORE=$(find /tmp/ed4core/unpacked -type f -name '*dosbox_pure*libretro*android*.so' | head -n 1)
-          test -n "$CORE"
-          cp "$CORE" app/src/main/jniLibs/arm64-v8a/libdosbox_pure_libretro_android.so
-
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
